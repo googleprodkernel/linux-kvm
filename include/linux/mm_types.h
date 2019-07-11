@@ -18,6 +18,7 @@
 #include <linux/seqlock.h>
 
 #include <asm/mmu.h>
+#include <asm/asi.h>
 
 #ifndef AT_VECTOR_SIZE_ARCH
 #define AT_VECTOR_SIZE_ARCH 0
@@ -494,6 +495,8 @@ struct mm_struct {
 		 */
 		atomic_t membarrier_state;
 #endif
+
+		struct asi asi[ASI_MAX_NUM];
 
 		/**
 		 * @mm_users: The number of users including userspace.

@@ -7,3 +7,4 @@ generic-y += param.h
 generic-y += qrwlock.h
 generic-y += qspinlock.h
 generic-y += user.h
+generic-y += asi.h
