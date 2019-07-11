@@ -21,6 +21,7 @@
 #include <linux/percpu_counter.h>
 
 #include <asm/mmu.h>
+#include <asm/asi.h>
 
 #ifndef AT_VECTOR_SIZE_ARCH
 #define AT_VECTOR_SIZE_ARCH 0
@@ -800,6 +801,10 @@ struct mm_struct {
 		 * cache-line, which needs to be touched by switch_mm().
 		 */
 		atomic_t membarrier_state;
+#endif
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+		struct asi asi[ASI_MAX_NUM];
 #endif
 
 		/**
