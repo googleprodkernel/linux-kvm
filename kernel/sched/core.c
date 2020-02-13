@@ -19,6 +19,7 @@
 
 #include <asm/switch_to.h>
 #include <asm/tlb.h>
+#include <asm/asi.h>
 
 #include "../workqueue_internal.h"
 #include "../../fs/io-wq.h"
@@ -6140,6 +6141,10 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 	cpu = smp_processor_id();
 	rq = cpu_rq(cpu);
 	prev = rq->curr;
+
+	/* This could possibly be delayed to just before the context switch. */
+	VM_WARN_ON(!asi_is_target_unrestricted());
+	asi_exit();
 
 	schedule_debug(prev, !!sched_mode);
 
