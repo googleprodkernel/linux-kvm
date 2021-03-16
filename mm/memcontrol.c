@@ -3539,6 +3539,29 @@ static int mem_cgroup_hierarchy_write(struct cgroup_subsys_state *css,
 	return -EINVAL;
 }
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+static u64 mem_cgroup_asi_read(struct cgroup_subsys_state *css,
+				     struct cftype *cft)
+{
+        return mem_cgroup_from_css(css)->use_asi;
+}
+
+static int mem_cgroup_asi_write(struct cgroup_subsys_state *css,
+				      struct cftype *cft, u64 val)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
+
+	if (val == 1 || val == 0)
+		memcg->use_asi = val;
+	else
+		return -EINVAL;
+
+	return 0;
+}
+
+#endif
+
 static unsigned long mem_cgroup_usage(struct mem_cgroup *memcg, bool swap)
 {
 	unsigned long val;
@@ -4888,6 +4911,13 @@ static struct cftype mem_cgroup_legacy_files[] = {
 		.write_u64 = mem_cgroup_hierarchy_write,
 		.read_u64 = mem_cgroup_hierarchy_read,
 	},
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	{
+		.name = "use_asi",
+		.write_u64 = mem_cgroup_asi_write,
+		.read_u64 = mem_cgroup_asi_read,
+	},
+#endif
 	{
 		.name = "cgroup.event_control",		/* XXX: for compat */
 		.write = memcg_write_event_control,

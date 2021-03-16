@@ -607,6 +607,14 @@ struct mm_struct {
 		 * new_owner->alloc_lock is held
 		 */
 		struct task_struct __rcu *owner;
+
+#endif
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+                /* Is ASI enabled for this mm? ASI requires allocating extra
+                 * resources, such as ASI page tables. To prevent allocationg
+                 * these resources for every mm in the system, we expect that
+                 * only VM mm's will have this flag set. */
+		bool asi_enabled;
 #endif
 		struct user_namespace *user_ns;
 
@@ -664,6 +672,15 @@ struct mm_struct {
 };
 
 extern struct mm_struct init_mm;
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+static inline bool mm_asi_enabled(struct mm_struct *mm)
+{
+        return mm->asi_enabled;
+}
+#else
+static inline bool mm_asi_enabled(struct mm_struct *mm) { return false; }
+#endif
 
 /* Pointer magic because the dynamic array size confuses some compilers. */
 static inline void mm_init_cpumask(struct mm_struct *mm)

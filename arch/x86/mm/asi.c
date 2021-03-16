@@ -2,6 +2,7 @@
 
 #include <linux/init.h>
 #include <linux/memblock.h>
+#include <linux/memcontrol.h>
 
 #include <asm/asi.h>
 #include <asm/pgalloc.h>
@@ -322,7 +323,20 @@ EXPORT_SYMBOL_GPL(asi_exit);
 
 void asi_init_mm_state(struct mm_struct *mm)
 {
+	struct mem_cgroup *memcg = get_mem_cgroup_from_mm(mm);
+
 	memset(mm->asi, 0, sizeof(mm->asi));
+	mm->asi_enabled = false;
+
+	/*
+	 * TODO: In addition to a cgroup flag, we may also want a per-process
+	 * flag.
+	 */
+        if (memcg) {
+		mm->asi_enabled = boot_cpu_has(X86_FEATURE_ASI) &&
+				  memcg->use_asi;
+		css_put(&memcg->css);
+	}
 }
 
 static bool is_page_within_range(size_t addr, size_t page_size,

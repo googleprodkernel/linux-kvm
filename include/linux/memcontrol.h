@@ -259,6 +259,9 @@ struct mem_cgroup {
 	 */
 	bool oom_group;
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+        bool use_asi;
+#endif
 	/* protected by memcg_oom_lock */
 	bool		oom_lock;
 	int		under_oom;
