@@ -44,6 +44,8 @@ static inline struct asi *asi_get_target(void) { return NULL; }
 
 static inline struct asi *asi_get_current(void) { return NULL; }
 
+#define static_asi_enabled() false
+
 #endif  /* !_ASSEMBLY_ */
 
 #endif /* !CONFIG_ADDRESS_SPACE_ISOLATION */

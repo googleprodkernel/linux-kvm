@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
+#include <linux/init.h>
+
 #include <asm/asi.h>
 #include <asm/pgalloc.h>
 #include <asm/mmu_context.h>
@@ -17,6 +19,9 @@ int asi_register_class(const char *name, uint flags,
 		       const struct asi_hooks *ops)
 {
 	int i;
+
+	if (!boot_cpu_has(X86_FEATURE_ASI))
+		return 0;
 
 	VM_BUG_ON(name == NULL);
 
@@ -43,6 +48,9 @@ EXPORT_SYMBOL_GPL(asi_register_class);
 
 void asi_unregister_class(int index)
 {
+	if (!boot_cpu_has(X86_FEATURE_ASI))
+		return;
+
 	spin_lock(&asi_class_lock);
 
 	WARN_ON(asi_class[index].name == NULL);
@@ -52,9 +60,21 @@ void asi_unregister_class(int index)
 }
 EXPORT_SYMBOL_GPL(asi_unregister_class);
 
+static int __init set_asi_param(char *str)
+{
+	if (strcmp(str, "on") == 0)
+		setup_force_cpu_cap(X86_FEATURE_ASI);
+
+	return 0;
+}
+early_param("asi", set_asi_param);
+
 int asi_init(struct mm_struct *mm, int asi_index)
 {
 	struct asi *asi = &mm->asi[asi_index];
+
+	if (!boot_cpu_has(X86_FEATURE_ASI))
+		return 0;
 
 	/* Index 0 is reserved for special purposes. */
 	WARN_ON(asi_index == 0 || asi_index >= ASI_MAX_NUM);
@@ -79,6 +99,9 @@ EXPORT_SYMBOL_GPL(asi_init);
 
 void asi_destroy(struct asi *asi)
 {
+	if (!boot_cpu_has(X86_FEATURE_ASI))
+		return;
+
 	free_pages((ulong)asi->pgd, PGD_ALLOCATION_ORDER);
 	memset(asi, 0, sizeof(struct asi));
 }
@@ -109,6 +132,9 @@ static void __asi_enter(void)
 
 void asi_enter(struct asi *asi)
 {
+	if (!static_cpu_has(X86_FEATURE_ASI))
+		return;
+
 	VM_WARN_ON_ONCE(!asi);
 
 	this_cpu_write(asi_cpu_state.target_asi, asi);
@@ -122,6 +148,9 @@ void asi_exit(void)
 {
 	u64 unrestricted_cr3;
 	struct asi *asi;
+
+	if (!static_cpu_has(X86_FEATURE_ASI))
+		return;
 
 	preempt_disable();
 

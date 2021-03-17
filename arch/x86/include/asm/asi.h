@@ -6,6 +6,7 @@
 
 #include <asm/pgtable_types.h>
 #include <asm/percpu.h>
+#include <asm/cpufeature.h>
 
 #ifdef CONFIG_ADDRESS_SPACE_ISOLATION
 
@@ -52,18 +53,24 @@ void asi_exit(void);
 
 static inline void asi_set_target_unrestricted(void)
 {
-	barrier();
-	this_cpu_write(asi_cpu_state.target_asi, NULL);
+	if (static_cpu_has(X86_FEATURE_ASI)) {
+		barrier();
+		this_cpu_write(asi_cpu_state.target_asi, NULL);
+	}
 }
 
 static inline struct asi *asi_get_current(void)
 {
-	return this_cpu_read(asi_cpu_state.curr_asi);
+	return static_cpu_has(X86_FEATURE_ASI)
+	       ? this_cpu_read(asi_cpu_state.curr_asi)
+	       : NULL;
 }
 
 static inline struct asi *asi_get_target(void)
 {
-	return this_cpu_read(asi_cpu_state.target_asi);
+	return static_cpu_has(X86_FEATURE_ASI)
+	       ? this_cpu_read(asi_cpu_state.target_asi)
+	       : NULL;
 }
 
 static inline bool is_asi_active(void)
@@ -75,6 +82,8 @@ static inline bool asi_is_target_unrestricted(void)
 {
 	return !asi_get_target();
 }
+
+#define static_asi_enabled() cpu_feature_enabled(X86_FEATURE_ASI)
 
 #endif	/* CONFIG_ADDRESS_SPACE_ISOLATION */
 
