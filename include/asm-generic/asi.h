@@ -73,6 +73,8 @@ void asi_unmap(struct asi *asi, void *addr, size_t len, bool sleepable) { }
 static inline
 void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len) { }
 
+#define INIT_MM_ASI(init_mm)
+
 #define static_asi_enabled() false
 
 static inline void asi_check_boottime_disable(void) { }

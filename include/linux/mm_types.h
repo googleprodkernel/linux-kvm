@@ -19,6 +19,7 @@
 #include <linux/workqueue.h>
 #include <linux/seqlock.h>
 #include <linux/percpu_counter.h>
+#include <linux/mutex.h>
 
 #include <asm/mmu.h>
 #include <asm/asi.h>
@@ -810,6 +811,7 @@ struct mm_struct {
 
 #ifdef CONFIG_ADDRESS_SPACE_ISOLATION
 		struct asi asi[ASI_MAX_NUM];
+		struct mutex asi_init_lock;
 #endif
 
 		/**

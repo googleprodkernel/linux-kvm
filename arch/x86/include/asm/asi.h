@@ -58,6 +58,7 @@ struct asi {
 	struct asi_class *class;
 	struct mm_struct *mm;
 	u16 pcid_index;
+	int64_t ref_count;
 };
 
 DECLARE_PER_CPU_ALIGNED(struct asi *, curr_asi);
@@ -203,6 +204,9 @@ static __always_inline bool asi_in_critical_section(void)
 {
 	return asi_is_tense() && !asi_intr_nest_depth();
 }
+
+#define INIT_MM_ASI(init_mm) \
+	.asi_init_lock = __MUTEX_INITIALIZER(init_mm.asi_init_lock),
 
 #endif /* CONFIG_ADDRESS_SPACE_ISOLATION */
 

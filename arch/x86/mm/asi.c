@@ -312,9 +312,25 @@ static int __init asi_global_init(void)
 }
 subsys_initcall(asi_global_init)
 
+static void __asi_destroy(struct asi *asi)
+{
+	if (!boot_cpu_has(X86_FEATURE_ASI))
+		return;
+
+	lockdep_assert_held(&asi->mm->asi_init_lock);
+
+	WARN_ON_ONCE(asi->ref_count <= 0);
+	if (--(asi->ref_count) > 0)
+		return;
+
+	free_pages((ulong)asi->pgd, PGD_ALLOCATION_ORDER);
+	memset(asi, 0, sizeof(struct asi));
+}
+
 int asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi)
 {
 	struct asi *asi;
+	int err = 0;
 	uint i;
 
 	*out_asi = NULL;
@@ -326,8 +342,14 @@ int asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi)
 
 	asi = &mm->asi[asi_index];
 
-	BUG_ON(asi->pgd != NULL);
 	BUG_ON(!asi_class_registered(asi_index));
+
+	mutex_lock(&mm->asi_init_lock);
+
+	if (asi->ref_count++ > 0)
+		goto exit_unlock; /* err is 0 */
+
+	BUG_ON(asi->pgd != NULL);
 
 	/*
 	 * For now, we allocate 2 pages to avoid any potential problems with
@@ -336,8 +358,10 @@ int asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi)
 	 */
 	asi->pgd = (pgd_t *)__get_free_pages(
 		GFP_KERNEL_ACCOUNT | __GFP_ZERO, PGD_ALLOCATION_ORDER);
-	if (!asi->pgd)
-		return -ENOMEM;
+	if (!asi->pgd) {
+		err = -ENOMEM;
+		goto exit_unlock;
+	}
 
 	asi->class = &asi_class[asi_index];
 	asi->mm = mm;
@@ -347,18 +371,33 @@ int asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi)
 	for (i = KERNEL_PGD_BOUNDARY; i < PTRS_PER_PGD; i++)
 		set_pgd(asi->pgd + i, asi_global_nonsensitive_pgd[i]);
 
-	*out_asi = asi;
-	return 0;
+exit_unlock:
+	if (err)
+		__asi_destroy(asi);
+	else
+		*out_asi = asi;
+
+	mutex_unlock(&mm->asi_init_lock);
+
+	return err;
 }
 EXPORT_SYMBOL_GPL(asi_init);
 
 void asi_destroy(struct asi *asi)
 {
+	struct mm_struct *mm;
+
 	if (!boot_cpu_has(X86_FEATURE_ASI) || !asi)
 		return;
 
-	free_pages((ulong)asi->pgd, PGD_ALLOCATION_ORDER);
-	memset(asi, 0, sizeof(struct asi));
+	mm = asi->mm;
+	/*
+	 * We would need this mutex even if the refcount was atomic as we need
+	 * to block concurrent asi_init calls.
+	 */
+	mutex_lock(&mm->asi_init_lock);
+	__asi_destroy(asi);
+	mutex_unlock(&mm->asi_init_lock);
 }
 EXPORT_SYMBOL_GPL(asi_destroy);
 
@@ -467,6 +506,7 @@ void asi_init_mm_state(struct mm_struct *mm)
 		return;
 
 	memset(mm->asi, 0, sizeof(mm->asi));
+	mutex_init(&mm->asi_init_lock);
 }
 
 static bool is_page_within_range(unsigned long addr, unsigned long page_size,
