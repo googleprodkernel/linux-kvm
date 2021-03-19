@@ -16,6 +16,7 @@
 #include <linux/page-flags-layout.h>
 #include <linux/workqueue.h>
 #include <linux/seqlock.h>
+#include <linux/mutex.h>
 
 #include <asm/mmu.h>
 #include <asm/asi.h>
@@ -628,6 +629,7 @@ struct mm_struct {
                  * these resources for every mm in the system, we expect that
                  * only VM mm's will have this flag set. */
 		bool asi_enabled;
+                struct mutex asi_init_lock;
 #endif
 		struct user_namespace *user_ns;
 

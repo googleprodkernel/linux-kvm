@@ -282,9 +282,25 @@ static int __init asi_global_init(void)
 }
 subsys_initcall(asi_global_init)
 
+/* We're assuming we hold mm->asi_init_lock */
+static void __asi_destroy(struct asi *asi)
+{
+	if (!boot_cpu_has(X86_FEATURE_ASI))
+		return;
+
+        /* If refcount is non-zero, it means asi_init() was called multiple
+         * times. We free the asi pgd only when the last VM is destroyed. */
+        if (--(asi->asi_ref_count) > 0)
+                return;
+
+	asi_free_pgd(asi);
+	memset(asi, 0, sizeof(struct asi));
+}
+
 int asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi)
 {
-	struct asi *asi = &mm->asi[asi_index];
+        int err = 0;
+        struct asi *asi = &mm->asi[asi_index];
 
 	*out_asi = NULL;
 
@@ -295,6 +311,15 @@ int asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi)
 	WARN_ON(asi_index == 0 || asi_index >= ASI_MAX_NUM);
 	WARN_ON(asi->pgd != NULL);
 
+        /* Currently, mm and asi structs are conceptually tied together. In
+         * future implementations an asi object might be unrelated to a specicic
+         * mm. In that future implementation - the mutex will have to be inside
+         * asi. */
+	mutex_lock(&mm->asi_init_lock);
+
+        if (asi->asi_ref_count++ > 0)
+                goto exit_unlock; /* err is 0 */
+
 	/*
 	 * For now, we allocate 2 pages to avoid any potential problems with
 	 * KPTI code. This won't be needed once KPTI is folded into the ASI
@@ -302,8 +327,10 @@ int asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi)
 	 */
 	asi->pgd = (pgd_t *)__get_free_pages(GFP_PGTABLE_USER,
 					     PGD_ALLOCATION_ORDER);
-	if (!asi->pgd)
-		return -ENOMEM;
+	if (!asi->pgd) {
+                err = -ENOMEM;
+		goto exit_unlock;
+        }
 
 	asi->class = &asi_class[asi_index];
 	asi->mm = mm;
@@ -328,19 +355,30 @@ int asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi)
 			set_pgd(asi->pgd + i, asi_global_nonsensitive_pgd[i]);
 	}
 
-	*out_asi = asi;
+exit_unlock:
+	if (err)
+		__asi_destroy(asi);
 
-	return 0;
+        /* This unlock signals future asi_init() callers that we finished. */
+	mutex_unlock(&mm->asi_init_lock);
+
+	if (!err)
+		*out_asi = asi;
+	return err;
 }
 EXPORT_SYMBOL_GPL(asi_init);
 
 void asi_destroy(struct asi *asi)
 {
+        struct mm_struct *mm;
+
 	if (!boot_cpu_has(X86_FEATURE_ASI) || !asi)
 		return;
 
-	asi_free_pgd(asi);
-	memset(asi, 0, sizeof(struct asi));
+        mm = asi->mm;
+        mutex_lock(&mm->asi_init_lock);
+        __asi_destroy(asi);
+        mutex_unlock(&mm->asi_init_lock);
 }
 EXPORT_SYMBOL_GPL(asi_destroy);
 

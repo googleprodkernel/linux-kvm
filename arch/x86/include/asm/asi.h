@@ -40,6 +40,7 @@ struct asi {
 	pgd_t *pgd;
 	struct asi_class *class;
 	struct mm_struct *mm;
+        int64_t asi_ref_count;
 };
 
 DECLARE_PER_CPU_ALIGNED(struct asi_state, asi_cpu_state);

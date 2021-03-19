@@ -1084,6 +1084,9 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 
 	mm->user_ns = get_user_ns(user_ns);
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+        mutex_init(&mm->asi_init_lock);
+#endif
 	return mm;
 
 fail_noasi:
