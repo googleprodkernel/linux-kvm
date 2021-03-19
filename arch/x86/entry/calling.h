@@ -229,17 +229,36 @@ For 32-bit we have the following conventions - kernel is built with
 	 * are active. If clear CR3 already has the kernel page table
 	 * active.
 	 */
+        /* ADDRESS_PACE_ISOLATION: We might get here with CR3 pointing to an ASI
+         * page-table. In this case, PTI_USER_PGTABLE_BIT will also be 0. Saving
+         * the CR3 in the save_reg will cause us trouble when we call
+         * RESTORE_CR3. When we get to RESTORE_CR3 we may have alread
+         * asi_exit'ed, and restoring the asi CR3 will get us out of sync with
+         * asi_state->curr_index.
+         *
+         * TLDR: if we don't need to swap, save 0 in the save_reg, and then
+         * RESTORE_CR3 will skip the restore. */
 	bt	$PTI_USER_PGTABLE_BIT, \scratch_reg
-	jnc	.Ldone_\@
+	jnc	.Lnoswap_\@
 
 	ADJUST_KERNEL_CR3 \scratch_reg
 	movq	\scratch_reg, %cr3
+        jmp .Ldone_\@
 
+.Lnoswap_\@:
+        /* RESTORE_CR3 will skip restoration if save_reg is 0.*/
+        movq $(0), \save_reg
 .Ldone_\@:
 .endm
 
 .macro RESTORE_CR3 scratch_reg:req save_reg:req
 	ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_PTI
+
+        /* ADDRESS_SPACE_ISOLATION: See comments above in
+         * SAVE_AND_SWITCH_TO_KERNEL_CR3. No DON'T NEED to restore CR3 if
+         * save_reg is 0.*/
+        test \save_reg, \save_reg
+        jz .Lend_\@
 
 	ALTERNATIVE "jmp .Lwrcr3_\@", "", X86_FEATURE_PCID
 
