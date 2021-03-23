@@ -112,6 +112,11 @@ static inline void asi_intr_exit(void)
 	}
 }
 
+static inline pgd_t *asi_pgd(struct asi *asi)
+{
+	return asi->pgd;
+}
+
 #else	/* CONFIG_ADDRESS_SPACE_ISOLATION */
 
 static inline void asi_intr_enter(void) { }
@@ -119,6 +124,8 @@ static inline void asi_intr_enter(void) { }
 static inline void asi_intr_exit(void) { }
 
 static inline void asi_init_thread_state(struct thread_struct *thread) { }
+
+static inline pgd_t *asi_pgd(struct asi *asi) { return NULL; }
 
 #endif	/* CONFIG_ADDRESS_SPACE_ISOLATION */
 

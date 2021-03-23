@@ -17,6 +17,7 @@
 #include <asm/cacheflush.h>
 #include <asm/apic.h>
 #include <asm/perf_event.h>
+#include <asm/asi.h>
 
 #include "mm_internal.h"
 
@@ -1073,11 +1074,26 @@ void flush_tlb_kernel_range(unsigned long start, unsigned long end)
  */
 unsigned long __get_current_cr3_fast(void)
 {
-	unsigned long cr3 = build_cr3(this_cpu_read(cpu_tlbstate.loaded_mm)->pgd,
-		this_cpu_read(cpu_tlbstate.loaded_mm_asid));
+	unsigned long cr3;
+	pgd_t *pgd;
+	u16 asid = this_cpu_read(cpu_tlbstate.loaded_mm_asid);
+	struct asi *asi = asi_get_current();
+
+	if (asi)
+		pgd = asi_pgd(asi);
+	else
+		pgd = this_cpu_read(cpu_tlbstate.loaded_mm)->pgd;
+
+	cr3 = build_cr3(pgd, asid);
 
 	/* For now, be very restrictive about when this can be called. */
 	VM_WARN_ON(in_nmi() || preemptible());
+
+	/*
+	 * CR3 is unstable if the target ASI is unrestricted
+	 * and a restricted ASI is currently loaded.
+	 */
+	VM_WARN_ON_ONCE(asi && asi_is_target_unrestricted());
 
 	VM_BUG_ON(cr3 != __read_cr3());
 	return cr3;
