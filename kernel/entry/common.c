@@ -9,6 +9,8 @@
 
 #include "common.h"
 
+#include <asm/asi.h>
+
 #define CREATE_TRACE_POINTS
 #include <trace/events/syscalls.h>
 
@@ -321,6 +323,8 @@ noinstr irqentry_state_t irqentry_enter(struct pt_regs *regs)
 		.exit_rcu = false,
 	};
 
+	asi_intr_enter();
+
 	if (user_mode(regs)) {
 		irqentry_enter_from_user_mode(regs);
 		return ret;
@@ -416,6 +420,7 @@ noinstr void irqentry_exit(struct pt_regs *regs, irqentry_state_t state)
 			instrumentation_end();
 			rcu_irq_exit();
 			lockdep_hardirqs_on(CALLER_ADDR0);
+			asi_intr_exit();
 			return;
 		}
 
@@ -438,6 +443,7 @@ noinstr void irqentry_exit(struct pt_regs *regs, irqentry_state_t state)
 		if (state.exit_rcu)
 			rcu_irq_exit();
 	}
+	asi_intr_exit();
 }
 
 irqentry_state_t noinstr irqentry_nmi_enter(struct pt_regs *regs)

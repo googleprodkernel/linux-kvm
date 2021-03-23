@@ -107,12 +107,13 @@ void asi_destroy(struct asi *asi)
 }
 EXPORT_SYMBOL_GPL(asi_destroy);
 
-static void __asi_enter(void)
+void __asi_enter(void)
 {
 	u64 asi_cr3;
 	struct asi *target = this_cpu_read(asi_cpu_state.target_asi);
 
 	VM_BUG_ON(preemptible());
+	VM_BUG_ON(current->thread.intr_nest_depth != 0);
 
 	if (!target || target == this_cpu_read(asi_cpu_state.curr_asi))
 		return;

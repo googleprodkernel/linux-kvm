@@ -519,6 +519,11 @@ struct thread_struct {
 	unsigned int		iopl_warn:1;
 	unsigned int		sig_on_uaccess_err:1;
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	/* The nesting depth of exceptions/interrupts */
+	int			intr_nest_depth;
+#endif
+
 	/*
 	 * Protection Keys Register for Userspace.  Loaded immediately on
 	 * context switch. Store it in thread_struct to avoid a lookup in

@@ -61,6 +61,7 @@
 #include <asm/insn.h>
 #include <asm/insn-eval.h>
 #include <asm/vdso.h>
+#include <asm/asi.h>
 
 #ifdef CONFIG_X86_64
 #include <asm/x86_init.h>
@@ -413,6 +414,7 @@ DEFINE_IDTENTRY_DF(exc_double_fault)
 	}
 #endif
 
+	asi_exit();
 	irqentry_nmi_enter(regs);
 	instrumentation_begin();
 	notify_die(DIE_TRAP, str, regs, error_code, X86_TRAP_DF, SIGSEGV);

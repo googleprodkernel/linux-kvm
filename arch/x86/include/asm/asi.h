@@ -4,6 +4,8 @@
 
 #include <asm-generic/asi.h>
 
+#include <linux/sched.h>
+
 #include <asm/pgtable_types.h>
 #include <asm/percpu.h>
 #include <asm/cpufeature.h>
@@ -51,6 +53,11 @@ void asi_destroy(struct asi *asi);
 void asi_enter(struct asi *asi);
 void asi_exit(void);
 
+static inline void asi_init_thread_state(struct thread_struct *thread)
+{
+	thread->intr_nest_depth = 0;
+}
+
 static inline void asi_set_target_unrestricted(void)
 {
 	if (static_cpu_has(X86_FEATURE_ASI)) {
@@ -84,6 +91,34 @@ static inline bool asi_is_target_unrestricted(void)
 }
 
 #define static_asi_enabled() cpu_feature_enabled(X86_FEATURE_ASI)
+
+static inline void asi_intr_enter(void)
+{
+	if (static_cpu_has(X86_FEATURE_ASI)) {
+		current->thread.intr_nest_depth++;
+		barrier();
+	}
+}
+
+static inline void asi_intr_exit(void)
+{
+	void __asi_enter(void);
+
+	if (static_cpu_has(X86_FEATURE_ASI)) {
+		barrier();
+
+		if (--current->thread.intr_nest_depth == 0)
+			__asi_enter();
+	}
+}
+
+#else	/* CONFIG_ADDRESS_SPACE_ISOLATION */
+
+static inline void asi_intr_enter(void) { }
+
+static inline void asi_intr_exit(void) { }
+
+static inline void asi_init_thread_state(struct thread_struct *thread) { }
 
 #endif	/* CONFIG_ADDRESS_SPACE_ISOLATION */
 
