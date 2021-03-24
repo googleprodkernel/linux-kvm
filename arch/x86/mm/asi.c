@@ -60,6 +60,113 @@ void asi_unregister_class(int index)
 }
 EXPORT_SYMBOL_GPL(asi_unregister_class);
 
+#ifndef mm_inc_nr_p4ds
+#define mm_inc_nr_p4ds(mm)	do {} while (false)
+#endif
+
+#ifndef mm_dec_nr_p4ds
+#define mm_dec_nr_p4ds(mm)	do {} while (false)
+#endif
+
+#define pte_offset		pte_offset_kernel
+
+#define DEFINE_ASI_PGTBL_ALLOC(base, level)				\
+static level##_t * asi_##level##_alloc(struct asi *asi,			\
+				       base##_t *base, ulong addr,	\
+				       gfp_t flags)			\
+{									\
+	if (unlikely(base##_none(*base))) {				\
+		ulong pgtbl = get_zeroed_page(flags);			\
+		phys_addr_t pgtbl_pa;					\
+									\
+		if (pgtbl == 0)						\
+			return NULL;					\
+									\
+		pgtbl_pa = __pa(pgtbl);					\
+		paravirt_alloc_##level(asi->mm, PHYS_PFN(pgtbl_pa));	\
+									\
+		if (cmpxchg((ulong *)base, 0,				\
+			    pgtbl_pa | _PAGE_TABLE) == 0) {		\
+			mm_inc_nr_##level##s(asi->mm);			\
+		} else {						\
+			paravirt_release_##level(PHYS_PFN(pgtbl_pa));	\
+			free_page(pgtbl);				\
+		}							\
+									\
+		/* NOP on native. PV call on Xen. */			\
+		set_##base(base, *base);				\
+	}								\
+	VM_BUG_ON(base##_large(*base));					\
+	return level##_offset(base, addr);				\
+}
+
+DEFINE_ASI_PGTBL_ALLOC(pgd, p4d)
+DEFINE_ASI_PGTBL_ALLOC(p4d, pud)
+DEFINE_ASI_PGTBL_ALLOC(pud, pmd)
+DEFINE_ASI_PGTBL_ALLOC(pmd, pte)
+
+#define asi_free_dummy(asi, addr)
+#define __pmd_free(mm, pmd) free_page((ulong)(pmd))
+#define pud_page_vaddr(pud) ((ulong)pud_pgtable(pud))
+#define p4d_page_vaddr(p4d) ((ulong)p4d_pgtable(p4d))
+
+static inline unsigned long pte_page_vaddr(pte_t pte)
+{
+	return (unsigned long)__va(pte_val(pte) & PTE_PFN_MASK);
+}
+
+#define DEFINE_ASI_PGTBL_FREE(level, LEVEL, next, free)			\
+static void asi_free_##level(struct asi *asi, ulong pgtbl_addr)		\
+{									\
+	uint i;								\
+	level##_t *level = (level##_t *)pgtbl_addr;			\
+									\
+	for (i = 0; i < PTRS_PER_##LEVEL; i++) {			\
+		ulong vaddr;						\
+									\
+		if (level##_none(level[i]))				\
+			continue;					\
+									\
+		vaddr = level##_page_vaddr(level[i]);			\
+									\
+		if (!level##_leaf(level[i]))				\
+			asi_free_##next(asi, vaddr);			\
+		else							\
+			VM_WARN(true, "Lingering mapping in ASI %p at %lx",\
+				asi, vaddr);				\
+	}								\
+	paravirt_release_##level(PHYS_PFN(__pa(pgtbl_addr)));		\
+	free(asi->mm, level);						\
+	mm_dec_nr_##level##s(asi->mm);					\
+}
+
+DEFINE_ASI_PGTBL_FREE(pte, PTE, dummy, pte_free_kernel)
+DEFINE_ASI_PGTBL_FREE(pmd, PMD, pte, __pmd_free)
+DEFINE_ASI_PGTBL_FREE(pud, PUD, pmd, pud_free)
+DEFINE_ASI_PGTBL_FREE(p4d, P4D, pud, p4d_free)
+
+static void asi_free_pgd_range(struct asi *asi, uint start, uint end)
+{
+	uint i;
+
+	for (i = start; i < end; i++)
+		if (pgd_present(asi->pgd[i]))
+			asi_free_p4d(asi, (ulong)p4d_offset(asi->pgd + i, 0));
+}
+
+/*
+ * Free the page tables allocated for the given ASI instance.
+ * The caller must ensure that all the mappings have already been cleared
+ * and appropriate TLB flushes have been issued before calling this function.
+ */
+static void asi_free_pgd(struct asi *asi)
+{
+	VM_BUG_ON(asi->mm == &init_mm);
+
+	asi_free_pgd_range(asi, KERNEL_PGD_BOUNDARY, PTRS_PER_PGD);
+	free_pages((ulong)asi->pgd, PGD_ALLOCATION_ORDER);
+}
+
 static int __init set_asi_param(char *str)
 {
 	if (strcmp(str, "on") == 0)
@@ -102,7 +209,7 @@ void asi_destroy(struct asi *asi)
 	if (!boot_cpu_has(X86_FEATURE_ASI))
 		return;
 
-	free_pages((ulong)asi->pgd, PGD_ALLOCATION_ORDER);
+	asi_free_pgd(asi);
 	memset(asi, 0, sizeof(struct asi));
 }
 EXPORT_SYMBOL_GPL(asi_destroy);
