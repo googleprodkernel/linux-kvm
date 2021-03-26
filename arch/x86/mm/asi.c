@@ -6,6 +6,8 @@
 #include <asm/pgalloc.h>
 #include <asm/mmu_context.h>
 
+#include "../../../mm/internal.h"
+
 #undef pr_fmt
 #define pr_fmt(fmt)     "ASI: " fmt
 
@@ -286,4 +288,198 @@ EXPORT_SYMBOL_GPL(asi_exit);
 void asi_init_mm_state(struct mm_struct *mm)
 {
 	memset(mm->asi, 0, sizeof(mm->asi));
+}
+
+static bool is_page_within_range(size_t addr, size_t page_size,
+				 size_t range_start, size_t range_end)
+{
+	size_t page_start, page_end, page_mask;
+
+	page_mask = ~(page_size - 1);
+	page_start = addr & page_mask;
+	page_end = page_start + page_size;
+
+	return page_start >= range_start && page_end <= range_end;
+}
+
+static bool follow_physaddr(struct mm_struct *mm, size_t virt,
+			    phys_addr_t *phys, size_t *page_size, ulong *flags)
+{
+	pgd_t *pgd;
+	p4d_t *p4d;
+	pud_t *pud;
+	pmd_t *pmd;
+	pte_t *pte;
+
+#define follow_addr_at_level(base, level, LEVEL)			\
+	do {								\
+		*page_size = LEVEL##_SIZE;				\
+		level = level##_offset(base, virt);			\
+		if (!level##_present(*level))				\
+			return false;					\
+									\
+		if (level##_large(*level)) {				\
+			*phys = PFN_PHYS(level##_pfn(*level)) |		\
+				(virt & ~LEVEL##_MASK);			\
+			*flags = level##_flags(*level);			\
+			return true;					\
+		}							\
+	} while (false)
+
+	follow_addr_at_level(mm, pgd, PGDIR);
+	follow_addr_at_level(pgd, p4d, P4D);
+	follow_addr_at_level(p4d, pud, PUD);
+	follow_addr_at_level(pud, pmd, PMD);
+
+	*page_size = PAGE_SIZE;
+	pte = pte_offset_map(pmd, virt);
+	if (!pte)
+		return false;
+
+	if (!pte_present(*pte)) {
+		pte_unmap(pte);
+		return false;
+	}
+
+	*phys = PFN_PHYS(pte_pfn(*pte)) | (virt & ~PAGE_MASK);
+	*flags = pte_flags(*pte);
+
+	pte_unmap(pte);
+	return true;
+
+#undef follow_addr_at_level
+}
+
+/*
+ * Map the given range into the ASI page tables. The source of the mapping
+ * is the regular unrestricted page tables.
+ * Can be used to map any kernel memory.
+ *
+ * The caller MUST ensure that the source mapping will not change during this
+ * function. For dynamic kernel memory, this is generally ensured by mapping
+ * the memory within the allocator.
+ *
+ * If the source mapping is a large page and the range being mapped spans the
+ * entire large page, then it will be mapped as a large page in the ASI page
+ * tables too. If the range does not span the entire huge page, then it will
+ * be mapped as smaller pages. In that case, the implementation is slightly
+ * inefficient, as it will walk the source page tables again for each small
+ * destination page, but that should be ok for now, as usually in such cases,
+ * the range would consist of a small-ish number of pages.
+ */
+int asi_map_gfp(struct asi *asi, void *addr, size_t len, gfp_t gfp_flags)
+{
+	size_t virt;
+	size_t start = (size_t)addr;
+	size_t end = start + len;
+	size_t page_size;
+
+	if (!static_cpu_has(X86_FEATURE_ASI))
+		return 0;
+
+	VM_BUG_ON(start & ~PAGE_MASK);
+	VM_BUG_ON(len & ~PAGE_MASK);
+	VM_BUG_ON(start < TASK_SIZE_MAX);
+
+	gfp_flags &= GFP_RECLAIM_MASK;
+
+	if (asi->mm != &init_mm)
+		gfp_flags |= __GFP_ACCOUNT;
+
+	for (virt = start; virt < end; virt = ALIGN(virt + 1, page_size)) {
+		pgd_t *pgd;
+		p4d_t *p4d;
+		pud_t *pud;
+		pmd_t *pmd;
+		pte_t *pte;
+		phys_addr_t phys;
+		ulong flags;
+
+		if (!follow_physaddr(asi->mm, virt, &phys, &page_size, &flags))
+			continue;
+
+#define MAP_AT_LEVEL(base, BASE, level, LEVEL) {			       \
+			if (base##_large(*base)) {			       \
+				VM_BUG_ON(PHYS_PFN(phys & BASE##_MASK) !=      \
+					  base##_pfn(*base));		       \
+				continue;				       \
+			}						       \
+									       \
+			level = asi_##level##_alloc(asi, base, virt, gfp_flags);\
+			if (!level)					       \
+				return -ENOMEM;				       \
+									       \
+			if (page_size >= LEVEL##_SIZE &&		       \
+			    (level##_none(*level) || level##_leaf(*level)) &&  \
+			    is_page_within_range(virt, LEVEL##_SIZE,	       \
+						 start, end)) {		       \
+				page_size = LEVEL##_SIZE;		       \
+				phys &= LEVEL##_MASK;			       \
+									       \
+				if (level##_none(*level))		       \
+					set_##level(level,		       \
+						    __##level(phys | flags));  \
+				else					       \
+					VM_BUG_ON(level##_pfn(*level) !=       \
+						  PHYS_PFN(phys));	       \
+				continue;				       \
+			}						       \
+		}
+
+		pgd = pgd_offset_pgd(asi->pgd, virt);
+
+		MAP_AT_LEVEL(pgd, PGDIR, p4d, P4D);
+		MAP_AT_LEVEL(p4d, P4D, pud, PUD);
+		MAP_AT_LEVEL(pud, PUD, pmd, PMD);
+		MAP_AT_LEVEL(pmd, PMD, pte, PAGE);
+
+		VM_BUG_ON(true); /* Should never reach here. */
+#undef MAP_AT_LEVEL
+	}
+
+	return 0;
+}
+
+int asi_map(struct asi *asi, void *addr, size_t len)
+{
+	return asi_map_gfp(asi, addr, len, GFP_KERNEL);
+}
+
+/*
+ * Unmap a kernel address range previously mapped into the ASI page tables.
+ * The caller must ensure appropriate TLB flushing.
+ *
+ * The area being unmapped must be a whole previously mapped region (or regions)
+ * Unmapping a partial subset of a previously mapped region is not supported.
+ * That will work, but may end up unmapping more than what was asked for, if
+ * the mapping contained huge pages.
+ *
+ * Note that higher order direct map allocations are allowed to be partially
+ * freed. If it turns out that that actually happens for any of the
+ * non-sensitive allocations, then the above limitation may be a problem. For
+ * now, vunmap_pgd_range() will emit a warning if this situation is detected.
+ */
+void asi_unmap(struct asi *asi, void *addr, size_t len, bool flush_tlb)
+{
+	size_t start = (size_t)addr;
+	size_t end = start + len;
+	pgtbl_mod_mask mask = 0;
+
+	if (!static_cpu_has(X86_FEATURE_ASI) || !len)
+		return;
+
+	VM_BUG_ON(start & ~PAGE_MASK);
+	VM_BUG_ON(len & ~PAGE_MASK);
+	VM_BUG_ON(start < TASK_SIZE_MAX);
+
+	vunmap_pgd_range(asi->pgd, start, end, &mask, false);
+
+	if (flush_tlb)
+		asi_flush_tlb_range(asi, addr, len);
+}
+
+void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len)
+{
+	/* Later patches will do a more optimized flush. */
+	flush_tlb_kernel_range((ulong)addr, (ulong)addr + len);
 }

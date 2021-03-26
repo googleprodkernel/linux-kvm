@@ -2,6 +2,8 @@
 #ifndef __ASM_GENERIC_ASI_H
 #define __ASM_GENERIC_ASI_H
 
+#include <linux/types.h>
+
 /* ASI class flags */
 #define ASI_MAP_STANDARD_NONSENSITIVE	1
 
@@ -43,6 +45,23 @@ static inline bool is_asi_active(void) { return false; }
 static inline struct asi *asi_get_target(void) { return NULL; }
 
 static inline struct asi *asi_get_current(void) { return NULL; }
+
+static inline
+int asi_map_gfp(struct asi *asi, void *addr, size_t len, gfp_t gfp_flags)
+{
+	return 0;
+}
+
+static inline int asi_map(struct asi *asi, void *addr, size_t len)
+{
+	return 0;
+}
+
+static inline
+void asi_unmap(struct asi *asi, void *addr, size_t len, bool flush_tlb) { }
+
+static inline
+void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len) { }
 
 #define static_asi_enabled() false
 
