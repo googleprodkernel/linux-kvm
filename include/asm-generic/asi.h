@@ -12,6 +12,8 @@
 #define ASI_MAX_NUM_ORDER		0
 #define ASI_MAX_NUM			0
 
+#define ASI_GLOBAL_NONSENSITIVE		NULL
+
 #ifndef _ASSEMBLY_
 
 struct asi_hooks {};
@@ -63,7 +65,10 @@ void asi_unmap(struct asi *asi, void *addr, size_t len, bool flush_tlb) { }
 static inline
 void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len) { }
 
+#define INIT_MM_ASI(init_mm)
+
 #define static_asi_enabled() false
+
 
 #endif  /* !_ASSEMBLY_ */
 

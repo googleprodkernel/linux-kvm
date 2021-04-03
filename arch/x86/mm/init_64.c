@@ -1277,18 +1277,15 @@ static void __init register_page_bootmem_info(void)
 #endif
 }
 
-/*
- * Pre-allocates page-table pages for the vmalloc area in the kernel page-table.
- * Only the level which needs to be synchronized between all page-tables is
- * allocated because the synchronization can be expensive.
- */
-static void __init preallocate_vmalloc_pages(void)
+void __init preallocate_toplevel_pgtbls(pgd_t *pgd_table,
+					ulong start, ulong end,
+					const char *name)
 {
 	unsigned long addr;
 	const char *lvl;
 
-	for (addr = VMALLOC_START; addr <= VMALLOC_END; addr = ALIGN(addr + 1, PGDIR_SIZE)) {
-		pgd_t *pgd = pgd_offset_k(addr);
+	for (addr = start; addr <= end; addr = ALIGN(addr + 1, PGDIR_SIZE)) {
+		pgd_t *pgd = pgd_offset_pgd(pgd_table, addr);
 		p4d_t *p4d;
 		pud_t *pud;
 
@@ -1324,7 +1321,18 @@ failed:
 	 * The pages have to be there now or they will be missing in
 	 * process page-tables later.
 	 */
-	panic("Failed to pre-allocate %s pages for vmalloc area\n", lvl);
+	panic("Failed to pre-allocate %s pages for %s area\n", lvl, name);
+}
+
+/*
+ * Pre-allocates page-table pages for the vmalloc area in the kernel page-table.
+ * Only the level which needs to be synchronized between all page-tables is
+ * allocated because the synchronization can be expensive.
+ */
+static void __init preallocate_vmalloc_pages(void)
+{
+	preallocate_toplevel_pgtbls(init_mm.pgd, VMALLOC_START, VMALLOC_END,
+				    "vmalloc");
 }
 
 void __init mem_init(void)

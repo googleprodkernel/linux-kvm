@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include <linux/init.h>
+#include <linux/memblock.h>
 
 #include <asm/asi.h>
 #include <asm/pgalloc.h>
 #include <asm/mmu_context.h>
 
+#include "mm_internal.h"
 #include "../../../mm/internal.h"
 
 #undef pr_fmt
@@ -16,6 +18,8 @@ static DEFINE_SPINLOCK(asi_class_lock);
 
 DEFINE_PER_CPU_ALIGNED(struct asi_state, asi_cpu_state);
 EXPORT_PER_CPU_SYMBOL_GPL(asi_cpu_state);
+
+__aligned(PAGE_SIZE) pgd_t asi_global_nonsensitive_pgd[PTRS_PER_PGD];
 
 int asi_register_class(const char *name, uint flags,
 		       const struct asi_hooks *ops)
@@ -160,12 +164,17 @@ static void asi_free_pgd_range(struct asi *asi, uint start, uint end)
  * Free the page tables allocated for the given ASI instance.
  * The caller must ensure that all the mappings have already been cleared
  * and appropriate TLB flushes have been issued before calling this function.
+ *
+ * For standard non-sensitive ASI classes, the page tables shared with the
+ * master pseudo-PGD are not freed.
  */
 static void asi_free_pgd(struct asi *asi)
 {
 	VM_BUG_ON(asi->mm == &init_mm);
 
-	asi_free_pgd_range(asi, KERNEL_PGD_BOUNDARY, PTRS_PER_PGD);
+	if (!(asi->class->flags & ASI_MAP_STANDARD_NONSENSITIVE))
+		asi_free_pgd_range(asi, KERNEL_PGD_BOUNDARY, PTRS_PER_PGD);
+
 	free_pages((ulong)asi->pgd, PGD_ALLOCATION_ORDER);
 }
 
@@ -177,6 +186,24 @@ static int __init set_asi_param(char *str)
 	return 0;
 }
 early_param("asi", set_asi_param);
+
+static int __init asi_global_init(void)
+{
+	if (!boot_cpu_has(X86_FEATURE_ASI))
+		return 0;
+
+	preallocate_toplevel_pgtbls(asi_global_nonsensitive_pgd,
+				    PAGE_OFFSET,
+				    PAGE_OFFSET + PFN_PHYS(max_possible_pfn) - 1,
+				    "ASI Global Non-sensitive direct map");
+
+	preallocate_toplevel_pgtbls(asi_global_nonsensitive_pgd,
+				    VMALLOC_START, VMALLOC_END,
+				    "ASI Global Non-sensitive vmalloc");
+
+	return 0;
+}
+subsys_initcall(asi_global_init)
 
 int asi_init(struct mm_struct *mm, int asi_index)
 {
@@ -201,6 +228,13 @@ int asi_init(struct mm_struct *mm, int asi_index)
 
 	asi->class = &asi_class[asi_index];
 	asi->mm = mm;
+
+	if (asi->class->flags & ASI_MAP_STANDARD_NONSENSITIVE) {
+		uint i;
+
+		for (i = KERNEL_PGD_BOUNDARY; i < PTRS_PER_PGD; i++)
+			set_pgd(asi->pgd + i, asi_global_nonsensitive_pgd[i]);
+	}
 
 	return 0;
 }

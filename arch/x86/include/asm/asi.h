@@ -15,6 +15,8 @@
 #define ASI_MAX_NUM_ORDER	2
 #define ASI_MAX_NUM		(1 << ASI_MAX_NUM_ORDER)
 
+#define ASI_GLOBAL_NONSENSITIVE	(&init_mm.asi[0])
+
 struct asi_state {
 	struct asi *curr_asi;
 	struct asi *target_asi;
@@ -40,6 +42,8 @@ struct asi {
 };
 
 DECLARE_PER_CPU_ALIGNED(struct asi_state, asi_cpu_state);
+
+extern pgd_t asi_global_nonsensitive_pgd[];
 
 void asi_init_mm_state(struct mm_struct *mm);
 
@@ -116,6 +120,14 @@ static inline void asi_intr_exit(void)
 			__asi_enter();
 	}
 }
+
+#define INIT_MM_ASI(init_mm)						\
+	.asi = {							\
+		[0] = {							\
+			.pgd = asi_global_nonsensitive_pgd,		\
+			.mm = &init_mm					\
+		}							\
+	},
 
 static inline pgd_t *asi_pgd(struct asi *asi)
 {

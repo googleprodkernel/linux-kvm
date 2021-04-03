@@ -19,6 +19,9 @@ unsigned long kernel_physical_mapping_change(unsigned long start,
 					     unsigned long page_size_mask);
 void zone_sizes_init(void);
 
+void preallocate_toplevel_pgtbls(pgd_t *pgd_table, ulong start, ulong end,
+				 const char *name);
+
 extern int after_bootmem;
 
 void update_cache_mode_entry(unsigned entry, enum page_cache_mode cache);
