@@ -60,6 +60,11 @@ struct vm_area_struct;
 #else
 #define ___GFP_NOLOCKDEP	0
 #endif
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+#define ___GFP_GLOBAL_NONSENSITIVE 0x4000000u
+#else
+#define ___GFP_GLOBAL_NONSENSITIVE 0
+#endif
 /* If the above are modified, __GFP_BITS_SHIFT may need updating */
 
 /*
@@ -248,8 +253,11 @@ struct vm_area_struct;
 /* Disable lockdep for GFP context tracking */
 #define __GFP_NOLOCKDEP ((__force gfp_t)___GFP_NOLOCKDEP)
 
+/* Allocate non-sensitive memory */
+#define __GFP_GLOBAL_NONSENSITIVE ((__force gfp_t)___GFP_GLOBAL_NONSENSITIVE)
+
 /* Room for N __GFP_FOO bits */
-#define __GFP_BITS_SHIFT (25 + IS_ENABLED(CONFIG_LOCKDEP))
+#define __GFP_BITS_SHIFT 27
 #define __GFP_BITS_MASK ((__force gfp_t)((1 << __GFP_BITS_SHIFT) - 1))
 
 /**

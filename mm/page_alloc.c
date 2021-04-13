@@ -697,12 +697,20 @@ static inline bool pcp_allowed_order(unsigned int order)
 	return false;
 }
 
-static inline void free_the_page(struct page *page, unsigned int order)
+static inline void __free_the_page(struct page *page, unsigned int order)
 {
 	if (pcp_allowed_order(order))		/* Via pcp? */
 		free_unref_page(page, order);
 	else
 		__free_pages_ok(page, order, FPI_NONE);
+}
+
+static bool asi_unmap_freed_pages(struct page *page, unsigned int order);
+
+static inline void free_the_page(struct page *page, unsigned int order)
+{
+	if (asi_unmap_freed_pages(page, order))
+		__free_the_page(page, order);
 }
 
 /*
@@ -5162,6 +5170,129 @@ static inline bool prepare_alloc_pages(gfp_t gfp_mask, unsigned int order,
 	return true;
 }
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+static DEFINE_PER_CPU(struct work_struct, async_free_work);
+static DEFINE_PER_CPU(struct llist_head, pages_to_free_async);
+static bool async_free_work_initialized;
+
+static void __free_the_page(struct page *page, unsigned int order);
+
+static void async_free_work_fn(struct work_struct *work)
+{
+	struct page *page, *tmp;
+	struct llist_node *pages_to_free;
+	void *va;
+	size_t len;
+	uint order;
+
+	pages_to_free = llist_del_all(this_cpu_ptr(&pages_to_free_async));
+
+	/* A later patch will do a more optimized TLB flush. */
+
+	llist_for_each_entry_safe(page, tmp, pages_to_free, async_free_node) {
+		va = page_to_virt(page);
+		order = page->private;
+		len = PAGE_SIZE * (1 << order);
+
+		asi_flush_tlb_range(ASI_GLOBAL_NONSENSITIVE, va, len);
+		__free_the_page(page, order);
+	}
+}
+
+static int __init asi_page_alloc_init(void)
+{
+	int cpu;
+
+	if (!static_asi_enabled())
+		return 0;
+
+	for_each_possible_cpu(cpu)
+		INIT_WORK(per_cpu_ptr(&async_free_work, cpu),
+			  async_free_work_fn);
+
+	/*
+	 * This function is called before SMP is initialized, so we can assume
+	 * that this is the only running CPU at this point.
+	 */
+
+	barrier();
+	async_free_work_initialized = true;
+	barrier();
+
+	if (!llist_empty(this_cpu_ptr(&pages_to_free_async)))
+		queue_work_on(smp_processor_id(), mm_percpu_wq,
+			      this_cpu_ptr(&async_free_work));
+
+	return 0;
+}
+early_initcall(asi_page_alloc_init);
+
+static int asi_map_alloced_pages(struct page *page, uint order, gfp_t gfp_mask)
+{
+	uint i;
+
+	if (!static_asi_enabled())
+		return 0;
+
+	if (gfp_mask & __GFP_GLOBAL_NONSENSITIVE) {
+		for (i = 0; i < (1 << order); i++)
+			__SetPageGlobalNonSensitive(page + i);
+
+		return asi_map_gfp(ASI_GLOBAL_NONSENSITIVE, page_to_virt(page),
+				   PAGE_SIZE * (1 << order), gfp_mask);
+	}
+
+	return 0;
+}
+
+static bool asi_unmap_freed_pages(struct page *page, unsigned int order)
+{
+	void *va;
+	size_t len;
+	bool async_flush_needed;
+
+	if (!static_asi_enabled())
+		return true;
+
+	if (!PageGlobalNonSensitive(page))
+		return true;
+
+	va = page_to_virt(page);
+	len = PAGE_SIZE * (1 << order);
+	async_flush_needed = irqs_disabled() || in_interrupt();
+
+	asi_unmap(ASI_GLOBAL_NONSENSITIVE, va, len, !async_flush_needed);
+
+	if (!async_flush_needed)
+		return true;
+
+	page->private = order;
+	llist_add(&page->async_free_node, this_cpu_ptr(&pages_to_free_async));
+
+	if (async_free_work_initialized)
+		queue_work_on(smp_processor_id(), mm_percpu_wq,
+			      this_cpu_ptr(&async_free_work));
+
+	return false;
+}
+
+#else /* CONFIG_ADDRESS_SPACE_ISOLATION */
+
+static inline
+int asi_map_alloced_pages(struct page *pages, uint order, gfp_t gfp_mask)
+{
+	return 0;
+}
+
+static inline
+bool asi_unmap_freed_pages(struct page *page, unsigned int order)
+{
+	return true;
+}
+
+#endif
+
 /*
  * __alloc_pages_bulk - Allocate a number of order-0 pages to a list or array
  * @gfp: GFP flags for the allocation
@@ -5345,6 +5476,9 @@ struct page *__alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid,
 		return NULL;
 	}
 
+	if (static_asi_enabled() && (gfp & __GFP_GLOBAL_NONSENSITIVE))
+		gfp |= __GFP_ZERO;
+
 	gfp &= gfp_allowed_mask;
 	/*
 	 * Apply scoped allocation constraints. This is mainly about GFP_NOFS
@@ -5386,6 +5520,15 @@ out:
 	    unlikely(__memcg_kmem_charge_page(page, gfp, order) != 0)) {
 		__free_pages(page, order);
 		page = NULL;
+	}
+
+	if (page) {
+		int err = asi_map_alloced_pages(page, order, gfp);
+
+		if (unlikely(err)) {
+			__free_pages(page, order);
+			page = NULL;
+		}
 	}
 
 	trace_mm_page_alloc(page, order, alloc_gfp, ac.migratetype);

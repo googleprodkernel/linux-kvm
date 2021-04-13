@@ -141,6 +141,9 @@ enum pageflags {
 #ifdef CONFIG_KASAN_HW_TAGS
 	PG_skip_kasan_poison,
 #endif
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	PG_global_nonsensitive,
+#endif
 	__NR_PAGEFLAGS,
 
 	PG_readahead = PG_reclaim,
@@ -540,6 +543,12 @@ TESTPAGEFLAG(Young, young, PF_ANY)
 SETPAGEFLAG(Young, young, PF_ANY)
 TESTCLEARFLAG(Young, young, PF_ANY)
 PAGEFLAG(Idle, idle, PF_ANY)
+#endif
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+__PAGEFLAG(GlobalNonSensitive, global_nonsensitive, PF_ANY);
+#else
+__PAGEFLAG_FALSE(GlobalNonSensitive, global_nonsensitive);
 #endif
 
 #ifdef CONFIG_KASAN_HW_TAGS

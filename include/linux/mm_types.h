@@ -191,6 +191,11 @@ struct page {
 
 		/** @rcu_head: You can use this to free a page by RCU. */
 		struct rcu_head rcu_head;
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+		/* Links the pages_to_free_async list */
+		struct llist_node async_free_node;
+#endif
 	};
 
 	union {		/* This union is 4 bytes in size. */
