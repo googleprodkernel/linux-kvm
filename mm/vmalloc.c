@@ -2393,6 +2393,33 @@ void __init vmalloc_init(void)
 	vmap_initialized = true;
 }
 
+static int asi_map_vm_area(struct vm_struct *area)
+{
+	if (!static_asi_enabled())
+		return 0;
+
+	if (area->flags & VM_GLOBAL_NONSENSITIVE)
+		return asi_map(ASI_GLOBAL_NONSENSITIVE, area->addr,
+			       get_vm_area_size(area));
+
+	return 0;
+}
+
+static void asi_unmap_vm_area(struct vm_struct *area)
+{
+	if (!static_asi_enabled())
+		return;
+
+	/*
+	 * TODO: The TLB flush here could potentially be avoided in
+	 * the case when the existing flush from try_purge_vmap_area_lazy()
+	 * and/or vm_unmap_aliases() happens non-lazily.
+	 */
+	if (area->flags & VM_GLOBAL_NONSENSITIVE)
+		asi_unmap(ASI_GLOBAL_NONSENSITIVE, area->addr,
+			  get_vm_area_size(area), true);
+}
+
 static inline void setup_vmalloc_vm_locked(struct vm_struct *vm,
 	struct vmap_area *va, unsigned long flags, const void *caller)
 {
@@ -2570,6 +2597,7 @@ static void vm_remove_mappings(struct vm_struct *area, int deallocate_pages)
 	int flush_dmap = 0;
 	int i;
 
+	asi_unmap_vm_area(area);
 	remove_vm_area(area->addr);
 
 	/* If this is not VM_FLUSH_RESET_PERMS memory, no need for the below. */
@@ -2787,16 +2815,20 @@ void *vmap(struct page **pages, unsigned int count,
 
 	addr = (unsigned long)area->addr;
 	if (vmap_pages_range(addr, addr + size, pgprot_nx(prot),
-				pages, PAGE_SHIFT) < 0) {
-		vunmap(area->addr);
-		return NULL;
-	}
+				pages, PAGE_SHIFT) < 0)
+		goto err;
+
+	if (asi_map_vm_area(area))
+		goto err;
 
 	if (flags & VM_MAP_PUT_PAGES) {
 		area->pages = pages;
 		area->nr_pages = count;
 	}
 	return area->addr;
+err:
+	vunmap(area->addr);
+	return NULL;
 }
 EXPORT_SYMBOL(vmap);
 
@@ -2991,6 +3023,9 @@ static void *__vmalloc_area_node(struct vm_struct *area, gfp_t gfp_mask,
 		goto fail;
 	}
 
+	if (asi_map_vm_area(area))
+		goto fail;
+
 	return area->addr;
 
 fail:
@@ -3037,6 +3072,9 @@ void *__vmalloc_node_range(unsigned long size, unsigned long align,
 
 	if (WARN_ON_ONCE(!size))
 		return NULL;
+
+	if (static_asi_enabled() && (vm_flags & VM_GLOBAL_NONSENSITIVE))
+		gfp_mask |= __GFP_ZERO;
 
 	if ((size >> PAGE_SHIFT) > totalram_pages()) {
 		warn_alloc(gfp_mask, NULL,
@@ -3127,8 +3165,13 @@ fail:
 void *__vmalloc_node(unsigned long size, unsigned long align,
 			    gfp_t gfp_mask, int node, const void *caller)
 {
+	ulong vm_flags = 0;
+
+	if (static_asi_enabled() && (gfp_mask & __GFP_GLOBAL_NONSENSITIVE))
+		vm_flags |= VM_GLOBAL_NONSENSITIVE;
+
 	return __vmalloc_node_range(size, align, VMALLOC_START, VMALLOC_END,
-				gfp_mask, PAGE_KERNEL, 0, node, caller);
+				gfp_mask, PAGE_KERNEL, vm_flags, node, caller);
 }
 /*
  * This is only for performance analysis of vmalloc and stress purpose.

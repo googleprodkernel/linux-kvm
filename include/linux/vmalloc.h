@@ -39,6 +39,12 @@ struct notifier_block;		/* in notifier.h */
  * determine which allocations need the module shadow freed.
  */
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+#define VM_GLOBAL_NONSENSITIVE	0x00000800	/* Similar to __GFP_GLOBAL_NONSENSITIVE */
+#else
+#define VM_GLOBAL_NONSENSITIVE	0
+#endif
+
 /* bits [20..32] reserved for arch specific ioremap internals */
 
 /*

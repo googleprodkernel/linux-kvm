@@ -198,7 +198,8 @@ static int __init asi_global_init(void)
 				    "ASI Global Non-sensitive direct map");
 
 	preallocate_toplevel_pgtbls(asi_global_nonsensitive_pgd,
-				    VMALLOC_START, VMALLOC_END,
+				    VMALLOC_GLOBAL_NONSENSITIVE_START,
+				    VMALLOC_GLOBAL_NONSENSITIVE_END,
 				    "ASI Global Non-sensitive vmalloc");
 
 	return 0;

@@ -141,6 +141,11 @@ extern unsigned int ptrs_per_p4d;
 
 #define VMALLOC_END		(VMALLOC_START + (VMALLOC_SIZE_TB << 40) - 1)
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+#define VMALLOC_GLOBAL_NONSENSITIVE_START	VMALLOC_START
+#define VMALLOC_GLOBAL_NONSENSITIVE_END		VMALLOC_END
+#endif
+
 #define MODULES_VADDR		(__START_KERNEL_map + KERNEL_IMAGE_SIZE)
 /* The module sections ends with the start of the fixmap */
 #ifndef CONFIG_DEBUG_KMAP_LOCAL_FORCE_MAP
