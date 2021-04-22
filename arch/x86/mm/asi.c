@@ -207,11 +207,13 @@ static int __init asi_global_init(void)
 }
 subsys_initcall(asi_global_init)
 
-int asi_init(struct mm_struct *mm, int asi_index)
+int asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi)
 {
 	struct asi *asi = &mm->asi[asi_index];
 
-	if (!boot_cpu_has(X86_FEATURE_ASI))
+	*out_asi = NULL;
+
+	if (!boot_cpu_has(X86_FEATURE_ASI) || !mm->asi_enabled)
 		return 0;
 
 	/* Index 0 is reserved for special purposes. */
@@ -238,13 +240,15 @@ int asi_init(struct mm_struct *mm, int asi_index)
 			set_pgd(asi->pgd + i, asi_global_nonsensitive_pgd[i]);
 	}
 
+	*out_asi = asi;
+
 	return 0;
 }
 EXPORT_SYMBOL_GPL(asi_init);
 
 void asi_destroy(struct asi *asi)
 {
-	if (!boot_cpu_has(X86_FEATURE_ASI))
+	if (!boot_cpu_has(X86_FEATURE_ASI) || !asi)
 		return;
 
 	asi_free_pgd(asi);
@@ -278,10 +282,8 @@ void __asi_enter(void)
 
 void asi_enter(struct asi *asi)
 {
-	if (!static_cpu_has(X86_FEATURE_ASI))
+	if (!static_cpu_has(X86_FEATURE_ASI) || !asi)
 		return;
-
-	VM_WARN_ON_ONCE(!asi);
 
 	this_cpu_write(asi_cpu_state.target_asi, asi);
 	barrier();
@@ -423,7 +425,7 @@ int asi_map_gfp(struct asi *asi, void *addr, size_t len, gfp_t gfp_flags)
 	size_t end = start + len;
 	size_t page_size;
 
-	if (!static_cpu_has(X86_FEATURE_ASI))
+	if (!static_cpu_has(X86_FEATURE_ASI) || !asi)
 		return 0;
 
 	VM_BUG_ON(start & ~PAGE_MASK);
@@ -514,7 +516,7 @@ void asi_unmap(struct asi *asi, void *addr, size_t len, bool flush_tlb)
 	size_t end = start + len;
 	pgtbl_mod_mask mask = 0;
 
-	if (!static_cpu_has(X86_FEATURE_ASI) || !len)
+	if (!static_cpu_has(X86_FEATURE_ASI) || !asi || !len)
 		return;
 
 	VM_BUG_ON(start & ~PAGE_MASK);

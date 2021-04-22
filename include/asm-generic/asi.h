@@ -33,7 +33,12 @@ static inline void asi_unregister_class(int asi_index) { }
 
 static inline void asi_init_mm_state(struct mm_struct *mm) { }
 
-static inline int asi_init(struct mm_struct *mm, int asi_index) { return 0; }
+static inline
+int asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi)
+{
+	*out_asi = NULL;
+	return 0;
+}
 
 static inline void asi_destroy(struct asi *asi) { }
 

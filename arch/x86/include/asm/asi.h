@@ -51,7 +51,7 @@ int  asi_register_class(const char *name, uint flags,
 			const struct asi_hooks *ops);
 void asi_unregister_class(int index);
 
-int  asi_init(struct mm_struct *mm, int asi_index);
+int  asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi);
 void asi_destroy(struct asi *asi);
 
 void asi_enter(struct asi *asi);
