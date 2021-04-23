@@ -47,6 +47,7 @@
 #include <asm/spec-ctrl.h>
 #include <asm/virtext.h>
 #include <asm/vmx.h>
+#include <asm/asi.h>
 
 #include "capabilities.h"
 #include "cpuid.h"
@@ -300,7 +301,7 @@ static int vmx_setup_l1d_flush(enum vmx_l1d_flush_state l1tf)
 	else
 		static_branch_disable(&vmx_l1d_should_flush);
 
-	if (l1tf == VMENTER_L1D_FLUSH_COND)
+	if (l1tf == VMENTER_L1D_FLUSH_COND && !boot_cpu_has(X86_FEATURE_ASI))
 		static_branch_enable(&vmx_l1d_flush_cond);
 	else
 		static_branch_disable(&vmx_l1d_flush_cond);
@@ -6079,6 +6080,8 @@ static noinstr void vmx_l1d_flush(struct kvm_vcpu *vcpu)
 	if (static_branch_likely(&vmx_l1d_flush_cond)) {
 		bool flush_l1d;
 
+		VM_BUG_ON(vcpu->kvm->asi);
+
 		/*
 		 * Clear the per-vcpu flush bit, it gets set again
 		 * either from vcpu_run() or from one of the unsafe
@@ -6590,16 +6593,31 @@ static fastpath_t vmx_exit_handlers_fastpath(struct kvm_vcpu *vcpu)
 	}
 }
 
-static noinstr void vmx_vcpu_enter_exit(struct kvm_vcpu *vcpu,
-					struct vcpu_vmx *vmx)
+static void vmx_flush_sensitive_cpu_state(struct kvm_vcpu *vcpu)
 {
-	kvm_guest_enter_irqoff();
-
 	/* L1D Flush includes CPU buffer clear to mitigate MDS */
 	if (static_branch_unlikely(&vmx_l1d_should_flush))
 		vmx_l1d_flush(vcpu);
 	else if (static_branch_unlikely(&mds_user_clear))
 		mds_clear_cpu_buffers();
+}
+
+static noinstr void vmx_vcpu_enter_exit(struct kvm_vcpu *vcpu,
+					struct vcpu_vmx *vmx)
+{
+	unsigned long cr3;
+
+	kvm_guest_enter_irqoff();
+
+	vmx_flush_sensitive_cpu_state(vcpu);
+
+	asi_enter(vcpu->kvm->asi);
+
+	cr3 = __get_current_cr3_fast();
+	if (unlikely(cr3 != vmx->loaded_vmcs->host_state.cr3)) {
+		vmcs_writel(HOST_CR3, cr3);
+		vmx->loaded_vmcs->host_state.cr3 = cr3;
+	}
 
 	if (vcpu->arch.cr2 != native_read_cr2())
 		native_write_cr2(vcpu->arch.cr2);
@@ -6609,13 +6627,16 @@ static noinstr void vmx_vcpu_enter_exit(struct kvm_vcpu *vcpu,
 
 	vcpu->arch.cr2 = native_read_cr2();
 
+	VM_WARN_ON_ONCE(vcpu->kvm->asi && !is_asi_active());
+	asi_set_target_unrestricted();
+
 	kvm_guest_exit_irqoff();
 }
 
 static fastpath_t vmx_vcpu_run(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
-	unsigned long cr3, cr4;
+	unsigned long cr4;
 
 	/* Record the guest's net vcpu time for enforced NMI injections. */
 	if (unlikely(!enable_vnmi &&
@@ -6656,12 +6677,6 @@ static fastpath_t vmx_vcpu_run(struct kvm_vcpu *vcpu)
 		vmcs_writel(GUEST_RSP, vcpu->arch.regs[VCPU_REGS_RSP]);
 	if (kvm_register_is_dirty(vcpu, VCPU_REGS_RIP))
 		vmcs_writel(GUEST_RIP, vcpu->arch.regs[VCPU_REGS_RIP]);
-
-	cr3 = __get_current_cr3_fast();
-	if (unlikely(cr3 != vmx->loaded_vmcs->host_state.cr3)) {
-		vmcs_writel(HOST_CR3, cr3);
-		vmx->loaded_vmcs->host_state.cr3 = cr3;
-	}
 
 	cr4 = cr4_read_shadow();
 	if (unlikely(cr4 != vmx->loaded_vmcs->host_state.cr4)) {
@@ -7691,6 +7706,8 @@ static struct kvm_x86_ops vmx_x86_ops __initdata = {
 	.complete_emulated_msr = kvm_complete_insn_gp,
 
 	.vcpu_deliver_sipi_vector = kvm_vcpu_deliver_sipi_vector,
+
+	.flush_sensitive_cpu_state = vmx_flush_sensitive_cpu_state,
 };
 
 static __init void vmx_setup_user_return_msrs(void)

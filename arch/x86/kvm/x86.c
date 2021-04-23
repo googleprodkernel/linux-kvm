@@ -81,6 +81,7 @@
 #include <asm/emulate_prefix.h>
 #include <asm/sgx.h>
 #include <clocksource/hyperv_timer.h>
+#include <asm/asi.h>
 
 #define CREATE_TRACE_POINTS
 #include "trace.h"
@@ -296,6 +297,8 @@ u64 __read_mostly supported_xcr0;
 EXPORT_SYMBOL_GPL(supported_xcr0);
 
 static struct kmem_cache *x86_emulator_cache;
+
+static int __read_mostly kvm_asi_index;
 
 /*
  * When called, it means the previous get/set msr reached an invalid msr.
@@ -8620,6 +8623,50 @@ static struct notifier_block pvclock_gtod_notifier = {
 };
 #endif
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+/*
+ * We have an HT-stunning implementation available internally,
+ * but it is yet to be determined if it is fully compatible with the
+ * upstream core scheduling implementation. So leaving it out for now
+ * and just leaving these stubs here.
+ */
+static void stun_sibling(void) { }
+static void unstun_sibling(void) { }
+
+/*
+ * This function must be fully re-entrant and idempotent.
+ * Though the idempotency requirement could potentially be relaxed for stuff
+ * like stats where complete accuracy is not needed.
+ */
+static void kvm_pre_asi_exit(void)
+{
+	stun_sibling();
+}
+
+/*
+ * This function must be fully re-entrant and idempotent.
+ * Though the idempotency requirement could potentially be relaxed for stuff
+ * like stats where complete accuracy is not needed.
+ */
+static void kvm_post_asi_enter(void)
+{
+	struct kvm_vcpu *vcpu = raw_cpu_read(*kvm_get_running_vcpus());
+
+	kvm_x86_ops.flush_sensitive_cpu_state(vcpu);
+
+	unstun_sibling();
+}
+
+#endif
+
+static const struct asi_hooks kvm_asi_hooks = {
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	.pre_asi_exit = kvm_pre_asi_exit,
+	.post_asi_enter = kvm_post_asi_enter
+#endif
+};
+
 int kvm_arch_init(void *opaque)
 {
 	struct kvm_x86_init_ops *ops = opaque;
@@ -8674,6 +8721,15 @@ int kvm_arch_init(void *opaque)
 	if (r)
 		goto out_free_percpu;
 
+	if (ops->runtime_ops->flush_sensitive_cpu_state) {
+		r = asi_register_class("KVM", ASI_MAP_STANDARD_NONSENSITIVE,
+				       &kvm_asi_hooks);
+		if (r < 0)
+			goto out_mmu_exit;
+
+		kvm_asi_index = r;
+	}
+
 	kvm_timer_init();
 
 	perf_register_guest_info_callbacks(&kvm_guest_cbs);
@@ -8694,6 +8750,8 @@ int kvm_arch_init(void *opaque)
 
 	return 0;
 
+out_mmu_exit:
+	kvm_mmu_module_exit();
 out_free_percpu:
 	free_percpu(user_return_msrs);
 out_free_x86_emulator_cache:
@@ -8720,6 +8778,11 @@ void kvm_arch_exit(void)
 	irq_work_sync(&pvclock_irq_work);
 	cancel_work_sync(&pvclock_gtod_work);
 #endif
+	if (kvm_asi_index > 0) {
+		asi_unregister_class(kvm_asi_index);
+		kvm_asi_index = 0;
+	}
+
 	kvm_x86_ops.hardware_enable = NULL;
 	kvm_mmu_module_exit();
 	free_percpu(user_return_msrs);
@@ -11391,11 +11454,26 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 	INIT_DELAYED_WORK(&kvm->arch.kvmclock_sync_work, kvmclock_sync_fn);
 
 	kvm_apicv_init(kvm);
+
+	if (kvm_asi_index > 0) {
+		ret = asi_init(kvm->mm, kvm_asi_index, &kvm->asi);
+		if (ret)
+			goto error;
+	}
+
 	kvm_hv_init_vm(kvm);
 	kvm_mmu_init_vm(kvm);
 	kvm_xen_init_vm(kvm);
 
-	return static_call(kvm_x86_vm_init)(kvm);
+	ret = static_call(kvm_x86_vm_init)(kvm);
+	if (ret)
+		goto error;
+
+	return 0;
+error:
+	kvm_page_track_cleanup(kvm);
+	asi_destroy(kvm->asi);
+	return ret;
 }
 
 int kvm_arch_post_init_vm(struct kvm *kvm)
@@ -11549,6 +11627,7 @@ void kvm_arch_destroy_vm(struct kvm *kvm)
 	kvm_page_track_cleanup(kvm);
 	kvm_xen_destroy_vm(kvm);
 	kvm_hv_destroy_vm(kvm);
+	asi_destroy(kvm->asi);
 }
 
 static void memslot_rmap_free(struct kvm_memory_slot *slot)
