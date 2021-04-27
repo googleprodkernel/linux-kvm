@@ -68,7 +68,7 @@ config PAGE_TABLE_ISOLATION
 config ADDRESS_SPACE_ISOLATION
 	bool "Allow code to run with a reduced kernel address space"
 	default n
-	depends on X86_64 && !UML && SLAB
+	depends on X86_64 && !UML && SLAB && !NEED_PER_CPU_KM
 	depends on !PARAVIRT
 	help
 	   This feature provides the ability to run some kernel code

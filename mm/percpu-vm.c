@@ -153,8 +153,12 @@ static void __pcpu_unmap_pages(unsigned long addr, int nr_pages)
 static void pcpu_unmap_pages(struct pcpu_chunk *chunk,
 			     struct page **pages, int page_start, int page_end)
 {
+	struct vm_struct **vms = (struct vm_struct **)chunk->data;
 	unsigned int cpu;
 	int i;
+	ulong addr, nr_pages;
+
+	nr_pages = page_end - page_start;
 
 	for_each_possible_cpu(cpu) {
 		for (i = page_start; i < page_end; i++) {
@@ -164,8 +168,14 @@ static void pcpu_unmap_pages(struct pcpu_chunk *chunk,
 			WARN_ON(!page);
 			pages[pcpu_page_idx(cpu, i)] = page;
 		}
-		__pcpu_unmap_pages(pcpu_chunk_addr(chunk, cpu, page_start),
-				   page_end - page_start);
+		addr = pcpu_chunk_addr(chunk, cpu, page_start);
+
+		/* TODO: We should batch the TLB flushes */
+		if (vms[0]->flags & VM_GLOBAL_NONSENSITIVE)
+			asi_unmap(ASI_GLOBAL_NONSENSITIVE, (void *)addr,
+				  nr_pages * PAGE_SIZE, true);
+
+		__pcpu_unmap_pages(addr, nr_pages);
 	}
 }
 
@@ -212,17 +222,29 @@ static int __pcpu_map_pages(unsigned long addr, struct page **pages,
  * reverse lookup (addr -> chunk).
  */
 static int pcpu_map_pages(struct pcpu_chunk *chunk,
-			  struct page **pages, int page_start, int page_end)
+			  struct page **pages, int page_start, int page_end,
+			  gfp_t gfp)
 {
 	unsigned int cpu, tcpu;
 	int i, err;
+	ulong addr, nr_pages;
+
+	nr_pages = page_end - page_start;
 
 	for_each_possible_cpu(cpu) {
-		err = __pcpu_map_pages(pcpu_chunk_addr(chunk, cpu, page_start),
+		addr = pcpu_chunk_addr(chunk, cpu, page_start);
+		err = __pcpu_map_pages(addr,
 				       &pages[pcpu_page_idx(cpu, page_start)],
-				       page_end - page_start);
+				       nr_pages);
 		if (err < 0)
 			goto err;
+
+		if (gfp & __GFP_GLOBAL_NONSENSITIVE) {
+			err = asi_map(ASI_GLOBAL_NONSENSITIVE, (void *)addr,
+				      nr_pages * PAGE_SIZE);
+			if (err)
+				goto err;
+		}
 
 		for (i = page_start; i < page_end; i++)
 			pcpu_set_page_chunk(pages[pcpu_page_idx(cpu, i)],
@@ -231,10 +253,15 @@ static int pcpu_map_pages(struct pcpu_chunk *chunk,
 	return 0;
 err:
 	for_each_possible_cpu(tcpu) {
+		addr = pcpu_chunk_addr(chunk, tcpu, page_start);
+
+		if (gfp & __GFP_GLOBAL_NONSENSITIVE)
+			asi_unmap(ASI_GLOBAL_NONSENSITIVE, (void *)addr,
+				  nr_pages * PAGE_SIZE, false);
+
+		__pcpu_unmap_pages(addr, nr_pages);
 		if (tcpu == cpu)
 			break;
-		__pcpu_unmap_pages(pcpu_chunk_addr(chunk, tcpu, page_start),
-				   page_end - page_start);
 	}
 	pcpu_post_unmap_tlb_flush(chunk, page_start, page_end);
 	return err;
@@ -285,7 +312,7 @@ static int pcpu_populate_chunk(struct pcpu_chunk *chunk,
 	if (pcpu_alloc_pages(chunk, pages, page_start, page_end, gfp))
 		return -ENOMEM;
 
-	if (pcpu_map_pages(chunk, pages, page_start, page_end)) {
+	if (pcpu_map_pages(chunk, pages, page_start, page_end, gfp)) {
 		pcpu_free_pages(chunk, pages, page_start, page_end);
 		return -ENOMEM;
 	}
@@ -334,13 +361,19 @@ static struct pcpu_chunk *pcpu_create_chunk(gfp_t gfp)
 {
 	struct pcpu_chunk *chunk;
 	struct vm_struct **vms;
+	ulong vm_flags = 0;
+
+	if (static_asi_enabled() && (gfp & __GFP_GLOBAL_NONSENSITIVE))
+		vm_flags = VM_GLOBAL_NONSENSITIVE;
+
+	gfp &= ~__GFP_GLOBAL_NONSENSITIVE;
 
 	chunk = pcpu_alloc_chunk(gfp);
 	if (!chunk)
 		return NULL;
 
 	vms = pcpu_get_vm_areas(pcpu_group_offsets, pcpu_group_sizes,
-				pcpu_nr_groups, pcpu_atom_size);
+				pcpu_nr_groups, pcpu_atom_size, vm_flags);
 	if (!vms) {
 		pcpu_free_chunk(chunk);
 		return NULL;

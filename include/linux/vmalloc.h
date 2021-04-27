@@ -260,14 +260,14 @@ extern __init void vm_area_register_early(struct vm_struct *vm, size_t align);
 # ifdef CONFIG_MMU
 struct vm_struct **pcpu_get_vm_areas(const unsigned long *offsets,
 				     const size_t *sizes, int nr_vms,
-				     size_t align);
+				     size_t align, ulong flags);
 
 void pcpu_free_vm_areas(struct vm_struct **vms, int nr_vms);
 # else
 static inline struct vm_struct **
 pcpu_get_vm_areas(const unsigned long *offsets,
 		const size_t *sizes, int nr_vms,
-		size_t align)
+		size_t align, ulong flags)
 {
 	return NULL;
 }

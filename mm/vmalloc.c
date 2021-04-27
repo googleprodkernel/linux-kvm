@@ -3664,10 +3664,10 @@ pvm_determine_end_from_reverse(struct vmap_area **va, unsigned long align)
  */
 struct vm_struct **pcpu_get_vm_areas(const unsigned long *offsets,
 				     const size_t *sizes, int nr_vms,
-				     size_t align)
+				     size_t align, ulong flags)
 {
-	const unsigned long vmalloc_start = ALIGN(VMALLOC_START, align);
-	const unsigned long vmalloc_end = VMALLOC_END & ~(align - 1);
+	unsigned long vmalloc_start = VMALLOC_START;
+	unsigned long vmalloc_end = VMALLOC_END;
 	struct vmap_area **vas, *va;
 	struct vm_struct **vms;
 	int area, area2, last_area, term_area;
@@ -3677,6 +3677,15 @@ struct vm_struct **pcpu_get_vm_areas(const unsigned long *offsets,
 
 	/* verify parameters and allocate data structures */
 	BUG_ON(offset_in_page(align) || !is_power_of_2(align));
+
+	if (static_asi_enabled() && (flags & VM_GLOBAL_NONSENSITIVE)) {
+		vmalloc_start = VMALLOC_GLOBAL_NONSENSITIVE_START;
+		vmalloc_end = VMALLOC_GLOBAL_NONSENSITIVE_END;
+	}
+
+	vmalloc_start = ALIGN(vmalloc_start, align);
+	vmalloc_end = vmalloc_end & ~(align - 1);
+
 	for (last_area = 0, area = 0; area < nr_vms; area++) {
 		start = offsets[area];
 		end = start + sizes[area];
@@ -3815,7 +3824,7 @@ retry:
 	for (area = 0; area < nr_vms; area++) {
 		insert_vmap_area(vas[area], &vmap_area_root, &vmap_area_list);
 
-		setup_vmalloc_vm_locked(vms[area], vas[area], VM_ALLOC,
+		setup_vmalloc_vm_locked(vms[area], vas[area], flags | VM_ALLOC,
 				 pcpu_get_vm_areas);
 	}
 	spin_unlock(&vmap_area_lock);
