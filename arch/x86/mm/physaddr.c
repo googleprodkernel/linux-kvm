@@ -21,6 +21,9 @@ unsigned long __phys_addr(unsigned long x)
 		x = y + phys_base;
 
 		VIRTUAL_BUG_ON(y >= KERNEL_IMAGE_SIZE);
+	} else if (cpu_feature_enabled(X86_FEATURE_ASI) && x > ASI_LOCAL_MAP) {
+		x -= ASI_LOCAL_MAP;
+		VIRTUAL_BUG_ON(!phys_addr_valid(x));
 	} else {
 		x = y + (__START_KERNEL_map - PAGE_OFFSET);
 
@@ -28,6 +31,7 @@ unsigned long __phys_addr(unsigned long x)
 		VIRTUAL_BUG_ON((x > y) || !phys_addr_valid(x));
 	}
 
+	VIRTUAL_BUG_ON(!pfn_valid(x >> PAGE_SHIFT));
 	return x;
 }
 EXPORT_SYMBOL(__phys_addr);
@@ -53,6 +57,10 @@ bool __virt_addr_valid(unsigned long x)
 		x = y + phys_base;
 
 		if (y >= KERNEL_IMAGE_SIZE)
+			return false;
+	} else if (cpu_feature_enabled(X86_FEATURE_ASI) && x > ASI_LOCAL_MAP) {
+		x -= ASI_LOCAL_MAP;
+		if (!phys_addr_valid(x))
 			return false;
 	} else {
 		x = y + (__START_KERNEL_map - PAGE_OFFSET);

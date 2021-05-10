@@ -2,6 +2,8 @@
 #ifndef _ASM_X86_PAGE_64_DEFS_H
 #define _ASM_X86_PAGE_64_DEFS_H
 
+#include <asm/sparsemem.h>
+
 #ifndef __ASSEMBLY__
 #include <asm/kaslr.h>
 #endif
@@ -46,6 +48,24 @@
 #else
 #define __PAGE_OFFSET           __PAGE_OFFSET_BASE_L4
 #endif /* CONFIG_DYNAMIC_MEMORY_LAYOUT */
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+#define __ASI_LOCAL_MAP_BASE (__PAGE_OFFSET +				       \
+			      ALIGN(_BITUL(MAX_PHYSMEM_BITS - 1), PGDIR_SIZE))
+
+#ifdef CONFIG_DYNAMIC_MEMORY_LAYOUT
+#define ASI_LOCAL_MAP		asi_local_map_base
+#else
+#define ASI_LOCAL_MAP		__ASI_LOCAL_MAP_BASE
+#endif
+
+#else /* CONFIG_ADDRESS_SPACE_ISOLATION */
+
+/* Should never be used if ASI is not enabled */
+#define ASI_LOCAL_MAP		(*(ulong *)NULL)
+
+#endif
 
 #define __START_KERNEL_map	_AC(0xffffffff80000000, UL)
 

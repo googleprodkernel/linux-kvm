@@ -5,6 +5,7 @@
 #include <asm/page_64_types.h>
 
 #ifndef __ASSEMBLY__
+#include <linux/jump_label.h>
 #include <asm/alternative.h>
 
 /* duplicated to the one in bootmem.h */
@@ -15,12 +16,34 @@ extern unsigned long page_offset_base;
 extern unsigned long vmalloc_base;
 extern unsigned long vmemmap_base;
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+extern unsigned long asi_local_map_base;
+DECLARE_STATIC_KEY_FALSE(asi_local_map_initialized);
+
+#else
+
+/* Should never be used if ASI is not enabled */
+#define asi_local_map_base (*(ulong *)NULL)
+
+#endif
+
 static inline unsigned long __phys_addr_nodebug(unsigned long x)
 {
 	unsigned long y = x - __START_KERNEL_map;
+	unsigned long map_start = PAGE_OFFSET;
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	/*
+	 * This might significantly increase the size of the jump table.
+	 * If that turns out to be a problem, we should use a non-static branch.
+	 */
+	if (static_branch_likely(&asi_local_map_initialized) &&
+	    x > ASI_LOCAL_MAP)
+		map_start = ASI_LOCAL_MAP;
+#endif
 	/* use the carry flag to determine if x was < __START_KERNEL_map */
-	x = y + ((x > y) ? phys_base : (__START_KERNEL_map - PAGE_OFFSET));
+	x = y + ((x > y) ? phys_base : (__START_KERNEL_map - map_start));
 
 	return x;
 }

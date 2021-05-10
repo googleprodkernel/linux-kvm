@@ -143,6 +143,7 @@ enum pageflags {
 #endif
 #ifdef CONFIG_ADDRESS_SPACE_ISOLATION
 	PG_global_nonsensitive,
+	PG_local_nonsensitive,
 #endif
 	__NR_PAGEFLAGS,
 
@@ -547,8 +548,10 @@ PAGEFLAG(Idle, idle, PF_ANY)
 
 #ifdef CONFIG_ADDRESS_SPACE_ISOLATION
 __PAGEFLAG(GlobalNonSensitive, global_nonsensitive, PF_ANY);
+__PAGEFLAG(LocalNonSensitive, local_nonsensitive, PF_ANY);
 #else
 __PAGEFLAG_FALSE(GlobalNonSensitive, global_nonsensitive);
+__PAGEFLAG_FALSE(LocalNonSensitive, local_nonsensitive);
 #endif
 
 #ifdef CONFIG_KASAN_HW_TAGS

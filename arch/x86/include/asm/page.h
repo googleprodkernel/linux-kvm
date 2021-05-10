@@ -18,6 +18,7 @@
 
 struct page;
 
+#include <linux/jump_label.h>
 #include <linux/range.h>
 extern struct range pfn_mapped[];
 extern int nr_pfn_mapped;
@@ -56,8 +57,24 @@ static inline void copy_user_page(void *to, void *from, unsigned long vaddr,
 	__phys_addr_symbol(__phys_reloc_hide((unsigned long)(x)))
 
 #ifndef __va
-#define __va(x)			((void *)((unsigned long)(x)+PAGE_OFFSET))
+
+#define ___va(x)		((void *)((unsigned long)(x)+PAGE_OFFSET))
+
+#ifndef CONFIG_ADDRESS_SPACE_ISOLATION
+#define __va(x)			___va(x)
+#else
+
+DECLARE_STATIC_KEY_FALSE(asi_local_map_initialized);
+void *asi_va(unsigned long pa);
+
+/*
+ * This might significantly increase the size of the jump table.
+ * If that turns out to be a problem, we should use a non-static branch.
+ */
+#define __va(x)		(static_branch_likely(&asi_local_map_initialized) \
+			 ? asi_va((unsigned long)(x)) : ___va(x))
 #endif
+#endif /* __va */
 
 #define __boot_va(x)		__va(x)
 #define __boot_pa(x)		__pa(x)

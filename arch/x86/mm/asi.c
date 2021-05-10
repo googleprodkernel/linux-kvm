@@ -22,6 +22,12 @@ EXPORT_PER_CPU_SYMBOL_GPL(asi_cpu_state);
 
 __aligned(PAGE_SIZE) pgd_t asi_global_nonsensitive_pgd[PTRS_PER_PGD];
 
+DEFINE_STATIC_KEY_FALSE(asi_local_map_initialized);
+EXPORT_SYMBOL(asi_local_map_initialized);
+
+unsigned long asi_local_map_base __ro_after_init;
+EXPORT_SYMBOL(asi_local_map_base);
+
 int asi_register_class(const char *name, uint flags,
 		       const struct asi_hooks *ops)
 {
@@ -181,8 +187,44 @@ static void asi_free_pgd(struct asi *asi)
 
 static int __init set_asi_param(char *str)
 {
-	if (strcmp(str, "on") == 0)
+	if (strcmp(str, "on") == 0) {
+		/* TODO: We should eventually add support for KASAN. */
+		if (IS_ENABLED(CONFIG_KASAN)) {
+			pr_warn("ASI is currently not supported with KASAN");
+			return 0;
+		}
+
+		/*
+		 * We create a second copy of the direct map for the aliased
+		 * ASI Local Map, so we can support only half of the max
+		 * amount of RAM. That should be fine with 5 level page tables
+		 * but could be an issue with 4 level page tables.
+		 *
+		 * An alternative vmap-style implementation of an aliased local
+		 * region is possible without this limitation, but that has
+		 * some other compromises and would be usable only if
+		 * we trim down the types of structures marked as local
+		 * non-sensitive by limiting the designation to only those that
+		 * really are locally non-sensitive but globally sensitive.
+		 * That is certainly ideal and likely feasible, and would also
+		 * allow removal of some other relatively complex infrastructure
+		 * introduced in later patches. But we are including this
+		 * implementation here just for demonstration of a fully general
+		 * mechanism.
+		 *
+		 * An altogether different alternative to a separate aliased
+		 * region is also possible by just partitioning the regular
+		 * direct map (either statically or dynamically via additional
+		 * page-block types), which is certainly feasible but would
+		 * require more effort to implement properly.
+		 */
+		if (set_phys_mem_limit(MAXMEM / 2))
+			pr_warn("Limiting Memory Size to %llu", MAXMEM / 2);
+
+		asi_local_map_base = __ASI_LOCAL_MAP_BASE;
+
 		setup_force_cpu_cap(X86_FEATURE_ASI);
+	}
 
 	return 0;
 }
@@ -190,6 +232,8 @@ early_param("asi", set_asi_param);
 
 static int __init asi_global_init(void)
 {
+	uint i, n;
+
 	if (!boot_cpu_has(X86_FEATURE_ASI))
 		return 0;
 
@@ -202,6 +246,14 @@ static int __init asi_global_init(void)
 				    VMALLOC_GLOBAL_NONSENSITIVE_START,
 				    VMALLOC_GLOBAL_NONSENSITIVE_END,
 				    "ASI Global Non-sensitive vmalloc");
+
+	/* TODO: We should also handle memory hotplug. */
+	n = DIV_ROUND_UP(PFN_PHYS(max_pfn), PGDIR_SIZE);
+	for (i = 0; i < n; i++)
+		swapper_pg_dir[pgd_index(ASI_LOCAL_MAP) + i] =
+			swapper_pg_dir[pgd_index(PAGE_OFFSET) + i];
+
+	static_branch_enable(&asi_local_map_initialized);
 
 	return 0;
 }
@@ -236,7 +288,11 @@ int asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi)
 	if (asi->class->flags & ASI_MAP_STANDARD_NONSENSITIVE) {
 		uint i;
 
-		for (i = KERNEL_PGD_BOUNDARY; i < PTRS_PER_PGD; i++)
+		for (i = KERNEL_PGD_BOUNDARY; i < pgd_index(ASI_LOCAL_MAP); i++)
+			set_pgd(asi->pgd + i, asi_global_nonsensitive_pgd[i]);
+
+		for (i = pgd_index(VMALLOC_GLOBAL_NONSENSITIVE_START);
+		     i < PTRS_PER_PGD; i++)
 			set_pgd(asi->pgd + i, asi_global_nonsensitive_pgd[i]);
 	}
 
@@ -534,3 +590,12 @@ void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len)
 	/* Later patches will do a more optimized flush. */
 	flush_tlb_kernel_range((ulong)addr, (ulong)addr + len);
 }
+
+void *asi_va(unsigned long pa)
+{
+	struct page *page = pfn_to_page(PHYS_PFN(pa));
+
+	return (void *)(pa + (PageLocalNonSensitive(page)
+			      ? ASI_LOCAL_MAP : PAGE_OFFSET));
+}
+EXPORT_SYMBOL(asi_va);

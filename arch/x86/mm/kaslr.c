@@ -48,6 +48,7 @@ static const unsigned long vaddr_end = CPU_ENTRY_AREA_BASE;
 static __initdata struct kaslr_memory_region {
 	unsigned long *base;
 	unsigned long size_tb;
+	unsigned long extra_bytes;
 } kaslr_regions[] = {
 	{ &page_offset_base, 0 },
 	{ &vmalloc_base, 0 },
@@ -57,7 +58,7 @@ static __initdata struct kaslr_memory_region {
 /* Get size in bytes used by the memory region */
 static inline unsigned long get_padding(struct kaslr_memory_region *region)
 {
-	return (region->size_tb << TB_SHIFT);
+	return (region->size_tb << TB_SHIFT) + region->extra_bytes;
 }
 
 /* Initialize base and padding for each memory region randomized with KASLR */
@@ -69,6 +70,8 @@ void __init kernel_randomize_memory(void)
 	struct rnd_state rand_state;
 	unsigned long remain_entropy;
 	unsigned long vmemmap_size;
+	unsigned int max_physmem_bits = MAX_PHYSMEM_BITS -
+					!!boot_cpu_has(X86_FEATURE_ASI);
 
 	vaddr_start = pgtable_l5_enabled() ? __PAGE_OFFSET_BASE_L5 : __PAGE_OFFSET_BASE_L4;
 	vaddr = vaddr_start;
@@ -85,7 +88,7 @@ void __init kernel_randomize_memory(void)
 	if (!kaslr_memory_enabled())
 		return;
 
-	kaslr_regions[0].size_tb = 1 << (MAX_PHYSMEM_BITS - TB_SHIFT);
+	kaslr_regions[0].size_tb = 1 << (max_physmem_bits - TB_SHIFT);
 	kaslr_regions[1].size_tb = VMALLOC_SIZE_TB;
 
 	/*
@@ -99,6 +102,18 @@ void __init kernel_randomize_memory(void)
 	/* Adapt physical memory region size based on available memory */
 	if (memory_tb < kaslr_regions[0].size_tb)
 		kaslr_regions[0].size_tb = memory_tb;
+
+	if (boot_cpu_has(X86_FEATURE_ASI)) {
+		ulong direct_map_size = kaslr_regions[0].size_tb << TB_SHIFT;
+
+		/* Reserve additional space for the ASI Local Map */
+		direct_map_size = round_up(direct_map_size, PGDIR_SIZE);
+		direct_map_size *= 2;
+		VM_BUG_ON(direct_map_size % (1UL << TB_SHIFT));
+
+		kaslr_regions[0].size_tb = direct_map_size >> TB_SHIFT;
+		kaslr_regions[0].extra_bytes = PGDIR_SIZE;
+	}
 
 	/*
 	 * Calculate the vmemmap region size in TBs, aligned to a TB
@@ -136,6 +151,21 @@ void __init kernel_randomize_memory(void)
 		vaddr = round_up(vaddr + 1, PUD_SIZE);
 		remain_entropy -= entropy;
 	}
+
+	/*
+	 * This ensures that the ASI Local Map does not share a PGD entry with
+	 * the regular direct map, and also that the alignment of the two
+	 * regions is the same.
+	 *
+	 * We are relying on the fact that the region following the ASI Local
+	 * Map will be the local non-sensitive portion of the VMALLOC region.
+	 * If that were not the case and the next region was a global one,
+	 * then we would need extra padding after the ASI Local Map to ensure
+	 * that it doesn't share a PGD entry with that global region.
+	 */
+	if (cpu_feature_enabled(X86_FEATURE_ASI))
+		asi_local_map_base = page_offset_base + PGDIR_SIZE +
+				     ((kaslr_regions[0].size_tb / 2) << TB_SHIFT);
 }
 
 void __meminit init_trampoline_kaslr(void)

@@ -70,6 +70,7 @@ config ADDRESS_SPACE_ISOLATION
 	default n
 	depends on X86_64 && !UML && SLAB && !NEED_PER_CPU_KM
 	depends on !PARAVIRT
+	depends on !MEMORY_HOTPLUG
 	help
 	   This feature provides the ability to run some kernel code
 	   with a reduced kernel address space. This can be used to

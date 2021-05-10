@@ -880,6 +880,11 @@ static void __init early_panic(char *msg)
 
 static int userdef __initdata;
 
+u64 __init set_phys_mem_limit(u64 size)
+{
+	return e820__range_remove(size, ULLONG_MAX - size, E820_TYPE_RAM, 1);
+}
+
 /* The "mem=nopentium" boot option disables 4MB page tables on 32-bit kernels: */
 static int __init parse_memopt(char *p)
 {
@@ -905,7 +910,7 @@ static int __init parse_memopt(char *p)
 	if (mem_size == 0)
 		return -EINVAL;
 
-	e820__range_remove(mem_size, ULLONG_MAX - mem_size, E820_TYPE_RAM, 1);
+	set_phys_mem_limit(mem_size);
 
 #ifdef CONFIG_MEMORY_HOTPLUG
 	max_mem_size = mem_size;
