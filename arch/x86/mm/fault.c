@@ -1498,6 +1498,12 @@ DEFINE_IDTENTRY_RAW_ERRORCODE(exc_page_fault)
 {
 	unsigned long address = read_cr2();
 	irqentry_state_t state;
+	/*
+	 * There is a very small chance that an NMI could cause an asi_exit()
+	 * before this asi_get_current(), but that is ok, we will just do
+	 * the fixup on the next page fault.
+	 */
+	struct asi *asi = asi_get_current();
 
 	prefetchw(&current->mm->mmap_lock);
 
@@ -1539,6 +1545,7 @@ DEFINE_IDTENTRY_RAW_ERRORCODE(exc_page_fault)
 
 	instrumentation_begin();
 	handle_page_fault(regs, error_code, address);
+	asi_do_lazy_map(asi, address);
 	instrumentation_end();
 
 	irqentry_exit(regs, state);

@@ -699,6 +699,7 @@ void __mmdrop(struct mm_struct *mm)
 	mm_free_pgd(mm);
 	destroy_context(mm);
 	mmu_notifier_subscriptions_destroy(mm);
+	asi_free_mm_state(mm);
 	check_mm(mm);
 	put_user_ns(mm->user_ns);
 	free_mm(mm);
@@ -1072,17 +1073,20 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 		mm->def_flags = 0;
 	}
 
-	asi_init_mm_state(mm);
-
 	if (mm_alloc_pgd(mm))
 		goto fail_nopgd;
 
 	if (init_new_context(p, mm))
 		goto fail_nocontext;
 
+	if (asi_init_mm_state(mm))
+		goto fail_noasi;
+
 	mm->user_ns = get_user_ns(user_ns);
+
 	return mm;
 
+fail_noasi:
 fail_nocontext:
 	mm_free_pgd(mm);
 fail_nopgd:

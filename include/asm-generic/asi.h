@@ -13,6 +13,7 @@
 #define ASI_MAX_NUM			0
 
 #define ASI_GLOBAL_NONSENSITIVE		NULL
+#define ASI_LOCAL_NONSENSITIVE		NULL
 
 #define VMALLOC_GLOBAL_NONSENSITIVE_START	VMALLOC_START
 #define VMALLOC_GLOBAL_NONSENSITIVE_END		VMALLOC_END
@@ -31,7 +32,9 @@ int asi_register_class(const char *name, uint flags,
 
 static inline void asi_unregister_class(int asi_index) { }
 
-static inline void asi_init_mm_state(struct mm_struct *mm) { }
+static inline int asi_init_mm_state(struct mm_struct *mm) { return 0; }
+
+static inline void asi_free_mm_state(struct mm_struct *mm) { }
 
 static inline
 int asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi)
@@ -68,7 +71,14 @@ static inline int asi_map(struct asi *asi, void *addr, size_t len)
 }
 
 static inline
+void asi_sync_mapping(struct asi *asi, void *addr, size_t len) { }
+
+static inline
 void asi_unmap(struct asi *asi, void *addr, size_t len, bool flush_tlb) { }
+
+
+static inline
+void asi_do_lazy_map(struct asi *asi, size_t addr) { }
 
 static inline
 void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len) { }

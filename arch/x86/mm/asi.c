@@ -73,6 +73,17 @@ void asi_unregister_class(int index)
 }
 EXPORT_SYMBOL_GPL(asi_unregister_class);
 
+static void asi_clone_pgd(pgd_t *dst_table, pgd_t *src_table, size_t addr)
+{
+	pgd_t *src = pgd_offset_pgd(src_table, addr);
+	pgd_t *dst = pgd_offset_pgd(dst_table, addr);
+
+	if (!pgd_val(*dst))
+		set_pgd(dst, *src);
+	else
+		VM_BUG_ON(pgd_val(*dst) != pgd_val(*src));
+}
+
 #ifndef mm_inc_nr_p4ds
 #define mm_inc_nr_p4ds(mm)	do {} while (false)
 #endif
@@ -291,6 +302,11 @@ int asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi)
 		for (i = KERNEL_PGD_BOUNDARY; i < pgd_index(ASI_LOCAL_MAP); i++)
 			set_pgd(asi->pgd + i, asi_global_nonsensitive_pgd[i]);
 
+		for (i = pgd_index(ASI_LOCAL_MAP);
+		     i <= pgd_index(ASI_LOCAL_MAP + PFN_PHYS(max_possible_pfn));
+		     i++)
+			set_pgd(asi->pgd + i, mm->asi[0].pgd[i]);
+
 		for (i = pgd_index(VMALLOC_GLOBAL_NONSENSITIVE_START);
 		     i < PTRS_PER_PGD; i++)
 			set_pgd(asi->pgd + i, asi_global_nonsensitive_pgd[i]);
@@ -379,7 +395,7 @@ void asi_exit(void)
 }
 EXPORT_SYMBOL_GPL(asi_exit);
 
-void asi_init_mm_state(struct mm_struct *mm)
+int asi_init_mm_state(struct mm_struct *mm)
 {
 	struct mem_cgroup *memcg = get_mem_cgroup_from_mm(mm);
 
@@ -395,6 +411,28 @@ void asi_init_mm_state(struct mm_struct *mm)
 				  memcg->use_asi;
 		css_put(&memcg->css);
 	}
+
+	if (!mm->asi_enabled)
+		return 0;
+
+	mm->asi[0].mm = mm;
+	mm->asi[0].pgd = (pgd_t *)__get_free_page(GFP_PGTABLE_USER);
+	if (!mm->asi[0].pgd)
+		return -ENOMEM;
+
+	return 0;
+}
+
+void asi_free_mm_state(struct mm_struct *mm)
+{
+	if (!boot_cpu_has(X86_FEATURE_ASI) || !mm->asi_enabled)
+		return;
+
+	asi_free_pgd_range(&mm->asi[0], pgd_index(ASI_LOCAL_MAP),
+			   pgd_index(ASI_LOCAL_MAP +
+				     PFN_PHYS(max_possible_pfn)) + 1);
+
+	free_page((ulong)mm->asi[0].pgd);
 }
 
 static bool is_page_within_range(size_t addr, size_t page_size,
@@ -599,3 +637,37 @@ void *asi_va(unsigned long pa)
 			      ? ASI_LOCAL_MAP : PAGE_OFFSET));
 }
 EXPORT_SYMBOL(asi_va);
+
+static bool is_addr_in_local_nonsensitive_range(size_t addr)
+{
+	return addr >= ASI_LOCAL_MAP &&
+	       addr < VMALLOC_GLOBAL_NONSENSITIVE_START;
+}
+
+void asi_do_lazy_map(struct asi *asi, size_t addr)
+{
+	if (!static_cpu_has(X86_FEATURE_ASI) || !asi)
+		return;
+
+	if ((asi->class->flags & ASI_MAP_STANDARD_NONSENSITIVE) &&
+	    is_addr_in_local_nonsensitive_range(addr))
+		asi_clone_pgd(asi->pgd, asi->mm->asi[0].pgd, addr);
+}
+
+/*
+ * Should be called after asi_map(ASI_LOCAL_NONSENSITIVE,...) for any mapping
+ * that is required to exist prior to asi_enter() (e.g. thread stacks)
+ */
+void asi_sync_mapping(struct asi *asi, void *start, size_t len)
+{
+	size_t addr = (size_t)start;
+	size_t end = addr + len;
+
+	if (!static_cpu_has(X86_FEATURE_ASI) || !asi)
+		return;
+
+	if ((asi->class->flags & ASI_MAP_STANDARD_NONSENSITIVE) &&
+	    is_addr_in_local_nonsensitive_range(addr))
+		for (; addr < end; addr = pgd_addr_end(addr, end))
+			asi_clone_pgd(asi->pgd, asi->mm->asi[0].pgd, addr);
+}

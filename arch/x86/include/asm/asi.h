@@ -16,6 +16,7 @@
 #define ASI_MAX_NUM		(1 << ASI_MAX_NUM_ORDER)
 
 #define ASI_GLOBAL_NONSENSITIVE	(&init_mm.asi[0])
+#define ASI_LOCAL_NONSENSITIVE	(&current->mm->asi[0])
 
 struct asi_state {
 	struct asi *curr_asi;
@@ -45,7 +46,8 @@ DECLARE_PER_CPU_ALIGNED(struct asi_state, asi_cpu_state);
 
 extern pgd_t asi_global_nonsensitive_pgd[];
 
-void asi_init_mm_state(struct mm_struct *mm);
+int  asi_init_mm_state(struct mm_struct *mm);
+void asi_free_mm_state(struct mm_struct *mm);
 
 int  asi_register_class(const char *name, uint flags,
 			const struct asi_hooks *ops);
@@ -61,6 +63,8 @@ int  asi_map_gfp(struct asi *asi, void *addr, size_t len, gfp_t gfp_flags);
 int  asi_map(struct asi *asi, void *addr, size_t len);
 void asi_unmap(struct asi *asi, void *addr, size_t len, bool flush_tlb);
 void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len);
+void asi_sync_mapping(struct asi *asi, void *addr, size_t len);
+void asi_do_lazy_map(struct asi *asi, size_t addr);
 
 static inline void asi_init_thread_state(struct thread_struct *thread)
 {
