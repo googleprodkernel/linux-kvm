@@ -193,8 +193,21 @@ struct page {
 		struct rcu_head rcu_head;
 
 #ifdef CONFIG_ADDRESS_SPACE_ISOLATION
-		/* Links the pages_to_free_async list */
-		struct llist_node async_free_node;
+		struct {
+			/* Links the pages_to_free_async list */
+			struct llist_node async_free_node;
+
+			unsigned long _asi_pad_1;
+			unsigned long _asi_pad_2;
+
+			/*
+			 * Upon allocation of a locally non-sensitive page, set
+			 * to the allocating mm. Must be set to the same mm when
+			 * the page is freed. May potentially be overwritten in
+			 * the meantime, as long as it is restored before free.
+			 */
+			struct mm_struct *asi_mm;
+		};
 #endif
 	};
 

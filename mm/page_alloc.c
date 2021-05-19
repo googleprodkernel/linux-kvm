@@ -5231,19 +5231,33 @@ early_initcall(asi_page_alloc_init);
 static int asi_map_alloced_pages(struct page *page, uint order, gfp_t gfp_mask)
 {
 	uint i;
+	struct asi *asi;
+
+	VM_BUG_ON((gfp_mask & (__GFP_GLOBAL_NONSENSITIVE |
+			      __GFP_LOCAL_NONSENSITIVE)) ==
+		  (__GFP_GLOBAL_NONSENSITIVE | __GFP_LOCAL_NONSENSITIVE));
 
 	if (!static_asi_enabled())
 		return 0;
 
+	if (!(gfp_mask & (__GFP_GLOBAL_NONSENSITIVE |
+			  __GFP_LOCAL_NONSENSITIVE)))
+		return 0;
+
 	if (gfp_mask & __GFP_GLOBAL_NONSENSITIVE) {
+		asi = ASI_GLOBAL_NONSENSITIVE;
 		for (i = 0; i < (1 << order); i++)
 			__SetPageGlobalNonSensitive(page + i);
-
-		return asi_map_gfp(ASI_GLOBAL_NONSENSITIVE, page_to_virt(page),
-				   PAGE_SIZE * (1 << order), gfp_mask);
+	} else {
+		asi = ASI_LOCAL_NONSENSITIVE;
+		for (i = 0; i < (1 << order); i++) {
+			__SetPageLocalNonSensitive(page + i);
+			page[i].asi_mm = current->mm;
+		}
 	}
 
-	return 0;
+	return asi_map_gfp(asi, page_to_virt(page),
+			   PAGE_SIZE * (1 << order), gfp_mask);
 }
 
 static bool asi_unmap_freed_pages(struct page *page, unsigned int order)
@@ -5251,18 +5265,28 @@ static bool asi_unmap_freed_pages(struct page *page, unsigned int order)
 	void *va;
 	size_t len;
 	bool async_flush_needed;
+	struct asi *asi;
+
+	VM_BUG_ON(PageGlobalNonSensitive(page) && PageLocalNonSensitive(page));
 
 	if (!static_asi_enabled())
 		return true;
 
-	if (!PageGlobalNonSensitive(page))
+	if (PageGlobalNonSensitive(page))
+		asi = ASI_GLOBAL_NONSENSITIVE;
+	else if (PageLocalNonSensitive(page))
+		asi = &page->asi_mm->asi[0];
+	else
 		return true;
+
+	/* Heuristic to check that page->asi_mm is actually an mm_struct */
+	VM_BUG_ON(PageLocalNonSensitive(page) && asi->mm != page->asi_mm);
 
 	va = page_to_virt(page);
 	len = PAGE_SIZE * (1 << order);
 	async_flush_needed = irqs_disabled() || in_interrupt();
 
-	asi_unmap(ASI_GLOBAL_NONSENSITIVE, va, len, !async_flush_needed);
+	asi_unmap(asi, va, len, !async_flush_needed);
 
 	if (!async_flush_needed)
 		return true;
@@ -5476,8 +5500,15 @@ struct page *__alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid,
 		return NULL;
 	}
 
-	if (static_asi_enabled() && (gfp & __GFP_GLOBAL_NONSENSITIVE))
-		gfp |= __GFP_ZERO;
+	if (static_asi_enabled()) {
+		if ((gfp & __GFP_LOCAL_NONSENSITIVE) &&
+		    !mm_asi_enabled(current->mm))
+			gfp &= ~__GFP_LOCAL_NONSENSITIVE;
+
+		if (gfp & (__GFP_GLOBAL_NONSENSITIVE |
+			   __GFP_LOCAL_NONSENSITIVE))
+			gfp |= __GFP_ZERO;
+	}
 
 	gfp &= gfp_allowed_mask;
 	/*

@@ -51,6 +51,7 @@
 	{(unsigned long)__GFP_KSWAPD_RECLAIM,	"__GFP_KSWAPD_RECLAIM"},\
 	{(unsigned long)__GFP_ZEROTAGS,		"__GFP_ZEROTAGS"},	\
 	{(unsigned long)__GFP_SKIP_KASAN_POISON,"__GFP_SKIP_KASAN_POISON"},\
+	{(unsigned long)__GFP_LOCAL_NONSENSITIVE, "__GFP_LOCAL_NONSENSITIVE"},\
 	{(unsigned long)__GFP_GLOBAL_NONSENSITIVE, "__GFP_GLOBAL_NONSENSITIVE"}\
 
 #define show_gfp_flags(flags)						\
