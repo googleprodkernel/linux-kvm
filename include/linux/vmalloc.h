@@ -41,8 +41,10 @@ struct notifier_block;		/* in notifier.h */
 
 #ifdef CONFIG_ADDRESS_SPACE_ISOLATION
 #define VM_GLOBAL_NONSENSITIVE	0x00000800	/* Similar to __GFP_GLOBAL_NONSENSITIVE */
+#define VM_LOCAL_NONSENSITIVE	0x00001000	/* Similar to __GFP_LOCAL_NONSENSITIVE */
 #else
 #define VM_GLOBAL_NONSENSITIVE	0
+#define VM_LOCAL_NONSENSITIVE	0
 #endif
 
 /* bits [20..32] reserved for arch specific ioremap internals */
@@ -67,6 +69,10 @@ struct vm_struct {
 	unsigned int		nr_pages;
 	phys_addr_t		phys_addr;
 	const void		*caller;
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	/* Valid if flags contain VM_*_NONSENSITIVE */
+	struct asi		*asi;
+#endif
 };
 
 struct vmap_area {

@@ -2391,7 +2391,11 @@ void __init vmalloc_init(void)
 	 */
 	vmap_init_free_space();
 	vmap_initialized = true;
+
+	asi_vmalloc_init();
 }
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
 
 static int asi_map_vm_area(struct vm_struct *area)
 {
@@ -2399,10 +2403,13 @@ static int asi_map_vm_area(struct vm_struct *area)
 		return 0;
 
 	if (area->flags & VM_GLOBAL_NONSENSITIVE)
-		return asi_map(ASI_GLOBAL_NONSENSITIVE, area->addr,
-			       get_vm_area_size(area));
+		area->asi = ASI_GLOBAL_NONSENSITIVE;
+	else if (area->flags & VM_LOCAL_NONSENSITIVE)
+		area->asi = ASI_LOCAL_NONSENSITIVE;
+	else
+		return 0;
 
-	return 0;
+	return asi_map(area->asi, area->addr, get_vm_area_size(area));
 }
 
 static void asi_unmap_vm_area(struct vm_struct *area)
@@ -2415,10 +2422,16 @@ static void asi_unmap_vm_area(struct vm_struct *area)
 	 * the case when the existing flush from try_purge_vmap_area_lazy()
 	 * and/or vm_unmap_aliases() happens non-lazily.
 	 */
-	if (area->flags & VM_GLOBAL_NONSENSITIVE)
-		asi_unmap(ASI_GLOBAL_NONSENSITIVE, area->addr,
-			  get_vm_area_size(area), true);
+	if (area->flags & (VM_GLOBAL_NONSENSITIVE | VM_LOCAL_NONSENSITIVE))
+		asi_unmap(area->asi, area->addr, get_vm_area_size(area), true);
 }
+
+#else
+
+static inline int asi_map_vm_area(struct vm_struct *area) { return 0; }
+static inline void asi_unmap_vm_area(struct vm_struct *area) { }
+
+#endif
 
 static inline void setup_vmalloc_vm_locked(struct vm_struct *vm,
 	struct vmap_area *va, unsigned long flags, const void *caller)
@@ -2462,6 +2475,15 @@ static struct vm_struct *__get_vm_area_node(unsigned long size,
 	size = ALIGN(size, 1ul << shift);
 	if (unlikely(!size))
 		return NULL;
+
+	if (static_asi_enabled()) {
+		VM_BUG_ON((flags & VM_LOCAL_NONSENSITIVE) &&
+			  !(start >= VMALLOC_LOCAL_NONSENSITIVE_START &&
+			    end <= VMALLOC_LOCAL_NONSENSITIVE_END));
+
+		VM_BUG_ON((flags & VM_GLOBAL_NONSENSITIVE) &&
+			  start < VMALLOC_GLOBAL_NONSENSITIVE_START);
+	}
 
 	if (flags & VM_IOREMAP)
 		align = 1ul << clamp_t(int, get_count_order_long(size),
@@ -3073,8 +3095,22 @@ void *__vmalloc_node_range(unsigned long size, unsigned long align,
 	if (WARN_ON_ONCE(!size))
 		return NULL;
 
-	if (static_asi_enabled() && (vm_flags & VM_GLOBAL_NONSENSITIVE))
-		gfp_mask |= __GFP_ZERO;
+	if (static_asi_enabled()) {
+		VM_BUG_ON((vm_flags & (VM_LOCAL_NONSENSITIVE |
+				       VM_GLOBAL_NONSENSITIVE)) ==
+			  (VM_LOCAL_NONSENSITIVE | VM_GLOBAL_NONSENSITIVE));
+
+		if ((vm_flags & VM_LOCAL_NONSENSITIVE) &&
+		    !mm_asi_enabled(current->mm)) {
+			vm_flags &= ~VM_LOCAL_NONSENSITIVE;
+
+			if (end == VMALLOC_LOCAL_NONSENSITIVE_END)
+				end = VMALLOC_END;
+		}
+
+		if (vm_flags & (VM_GLOBAL_NONSENSITIVE | VM_LOCAL_NONSENSITIVE))
+			gfp_mask |= __GFP_ZERO;
+	}
 
 	if ((size >> PAGE_SHIFT) > totalram_pages()) {
 		warn_alloc(gfp_mask, NULL,
@@ -3166,11 +3202,19 @@ void *__vmalloc_node(unsigned long size, unsigned long align,
 			    gfp_t gfp_mask, int node, const void *caller)
 {
 	ulong vm_flags = 0;
+	ulong start = VMALLOC_START, end = VMALLOC_END;
 
-	if (static_asi_enabled() && (gfp_mask & __GFP_GLOBAL_NONSENSITIVE))
-		vm_flags |= VM_GLOBAL_NONSENSITIVE;
+	if (static_asi_enabled()) {
+		if (gfp_mask & __GFP_GLOBAL_NONSENSITIVE) {
+			vm_flags |= VM_GLOBAL_NONSENSITIVE;
+			start = VMALLOC_GLOBAL_NONSENSITIVE_START;
+		} else if (gfp_mask & __GFP_LOCAL_NONSENSITIVE) {
+			vm_flags |= VM_LOCAL_NONSENSITIVE;
+			end = VMALLOC_LOCAL_NONSENSITIVE_END;
+		}
+	}
 
-	return __vmalloc_node_range(size, align, VMALLOC_START, VMALLOC_END,
+	return __vmalloc_node_range(size, align, start, end,
 				gfp_mask, PAGE_KERNEL, vm_flags, node, caller);
 }
 /*
@@ -3678,9 +3722,15 @@ struct vm_struct **pcpu_get_vm_areas(const unsigned long *offsets,
 	/* verify parameters and allocate data structures */
 	BUG_ON(offset_in_page(align) || !is_power_of_2(align));
 
-	if (static_asi_enabled() && (flags & VM_GLOBAL_NONSENSITIVE)) {
-		vmalloc_start = VMALLOC_GLOBAL_NONSENSITIVE_START;
-		vmalloc_end = VMALLOC_GLOBAL_NONSENSITIVE_END;
+	if (static_asi_enabled()) {
+		VM_BUG_ON((flags & (VM_LOCAL_NONSENSITIVE |
+				    VM_GLOBAL_NONSENSITIVE)) ==
+			  (VM_LOCAL_NONSENSITIVE | VM_GLOBAL_NONSENSITIVE));
+
+		if (flags & VM_GLOBAL_NONSENSITIVE)
+			vmalloc_start = VMALLOC_GLOBAL_NONSENSITIVE_START;
+		else if (flags & VM_LOCAL_NONSENSITIVE)
+			vmalloc_end = VMALLOC_LOCAL_NONSENSITIVE_END;
 	}
 
 	vmalloc_start = ALIGN(vmalloc_start, align);

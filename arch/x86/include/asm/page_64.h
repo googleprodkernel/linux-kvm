@@ -18,6 +18,8 @@ extern unsigned long vmemmap_base;
 
 #ifdef CONFIG_ADDRESS_SPACE_ISOLATION
 
+extern unsigned long vmalloc_global_nonsensitive_start;
+extern unsigned long vmalloc_local_nonsensitive_end;
 extern unsigned long asi_local_map_base;
 DECLARE_STATIC_KEY_FALSE(asi_local_map_initialized);
 

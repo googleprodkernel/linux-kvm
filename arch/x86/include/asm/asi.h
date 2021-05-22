@@ -46,6 +46,8 @@ DECLARE_PER_CPU_ALIGNED(struct asi_state, asi_cpu_state);
 
 extern pgd_t asi_global_nonsensitive_pgd[];
 
+void asi_vmalloc_init(void);
+
 int  asi_init_mm_state(struct mm_struct *mm);
 void asi_free_mm_state(struct mm_struct *mm);
 

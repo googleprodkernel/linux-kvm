@@ -18,6 +18,9 @@
 #define VMALLOC_GLOBAL_NONSENSITIVE_START	VMALLOC_START
 #define VMALLOC_GLOBAL_NONSENSITIVE_END		VMALLOC_END
 
+#define VMALLOC_LOCAL_NONSENSITIVE_START	VMALLOC_START
+#define VMALLOC_LOCAL_NONSENSITIVE_END		VMALLOC_END
+
 #ifndef _ASSEMBLY_
 
 struct asi_hooks {};
@@ -35,6 +38,8 @@ static inline void asi_unregister_class(int asi_index) { }
 static inline int asi_init_mm_state(struct mm_struct *mm) { return 0; }
 
 static inline void asi_free_mm_state(struct mm_struct *mm) { }
+
+static inline void asi_vmalloc_init(void) { }
 
 static inline
 int asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi)

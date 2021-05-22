@@ -3,6 +3,7 @@
 #include <linux/init.h>
 #include <linux/memblock.h>
 #include <linux/memcontrol.h>
+#include <linux/moduleparam.h>
 
 #include <asm/asi.h>
 #include <asm/pgalloc.h>
@@ -27,6 +28,17 @@ EXPORT_SYMBOL(asi_local_map_initialized);
 
 unsigned long asi_local_map_base __ro_after_init;
 EXPORT_SYMBOL(asi_local_map_base);
+
+unsigned long vmalloc_global_nonsensitive_start __ro_after_init;
+EXPORT_SYMBOL(vmalloc_global_nonsensitive_start);
+
+unsigned long vmalloc_local_nonsensitive_end __ro_after_init;
+EXPORT_SYMBOL(vmalloc_local_nonsensitive_end);
+
+/* Approximate percent only. Rounded to PGDIR_SIZE boundary. */
+static uint vmalloc_local_nonsensitive_percent __ro_after_init = 50;
+core_param(vmalloc_local_nonsensitive_percent,
+	   vmalloc_local_nonsensitive_percent, uint, 0444);
 
 int asi_register_class(const char *name, uint flags,
 		       const struct asi_hooks *ops)
@@ -307,6 +319,10 @@ int asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi)
 		     i++)
 			set_pgd(asi->pgd + i, mm->asi[0].pgd[i]);
 
+		for (i = pgd_index(VMALLOC_LOCAL_NONSENSITIVE_START);
+		     i <= pgd_index(VMALLOC_LOCAL_NONSENSITIVE_END); i++)
+			set_pgd(asi->pgd + i, mm->asi[0].pgd[i]);
+
 		for (i = pgd_index(VMALLOC_GLOBAL_NONSENSITIVE_START);
 		     i < PTRS_PER_PGD; i++)
 			set_pgd(asi->pgd + i, asi_global_nonsensitive_pgd[i]);
@@ -431,6 +447,10 @@ void asi_free_mm_state(struct mm_struct *mm)
 	asi_free_pgd_range(&mm->asi[0], pgd_index(ASI_LOCAL_MAP),
 			   pgd_index(ASI_LOCAL_MAP +
 				     PFN_PHYS(max_possible_pfn)) + 1);
+
+	asi_free_pgd_range(&mm->asi[0],
+			   pgd_index(VMALLOC_LOCAL_NONSENSITIVE_START),
+			   pgd_index(VMALLOC_LOCAL_NONSENSITIVE_END) + 1);
 
 	free_page((ulong)mm->asi[0].pgd);
 }
@@ -670,4 +690,41 @@ void asi_sync_mapping(struct asi *asi, void *start, size_t len)
 	    is_addr_in_local_nonsensitive_range(addr))
 		for (; addr < end; addr = pgd_addr_end(addr, end))
 			asi_clone_pgd(asi->pgd, asi->mm->asi[0].pgd, addr);
+}
+
+void __init asi_vmalloc_init(void)
+{
+	uint start_index = pgd_index(VMALLOC_START);
+	uint end_index = pgd_index(VMALLOC_END);
+	uint global_start_index;
+
+	if (!boot_cpu_has(X86_FEATURE_ASI)) {
+		vmalloc_global_nonsensitive_start = VMALLOC_START;
+		vmalloc_local_nonsensitive_end = VMALLOC_END;
+		return;
+	}
+
+	if (vmalloc_local_nonsensitive_percent == 0) {
+		vmalloc_local_nonsensitive_percent = 1;
+		pr_warn("vmalloc_local_nonsensitive_percent must be non-zero");
+	}
+
+	if (vmalloc_local_nonsensitive_percent >= 100) {
+		vmalloc_local_nonsensitive_percent = 99;
+		pr_warn("vmalloc_local_nonsensitive_percent must be less than 100");
+	}
+
+	global_start_index = start_index + (end_index - start_index) *
+			     vmalloc_local_nonsensitive_percent / 100;
+	global_start_index = max(global_start_index, start_index + 1);
+
+	vmalloc_global_nonsensitive_start = -(PTRS_PER_PGD - global_start_index)
+					    * PGDIR_SIZE;
+	vmalloc_local_nonsensitive_end = vmalloc_global_nonsensitive_start - 1;
+
+	pr_debug("vmalloc_global_nonsensitive_start = %llx",
+		 vmalloc_global_nonsensitive_start);
+
+	VM_BUG_ON(vmalloc_local_nonsensitive_end >= VMALLOC_END);
+	VM_BUG_ON(vmalloc_global_nonsensitive_start <= VMALLOC_START);
 }
