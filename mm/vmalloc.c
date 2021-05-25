@@ -2424,6 +2424,14 @@ static void asi_unmap_vm_area(struct vm_struct *area)
 	 */
 	if (area->flags & (VM_GLOBAL_NONSENSITIVE | VM_LOCAL_NONSENSITIVE))
 		asi_unmap(area->asi, area->addr, get_vm_area_size(area), true);
+
+	if (area->flags & VM_USERMAP) {
+		uint i;
+
+		for (i = 0; i < area->nr_pages; i++)
+			if (PageLocalNonSensitive(area->pages[i]))
+				area->pages[i]->asi_mm = area->asi->mm;
+	}
 }
 
 #else
