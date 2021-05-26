@@ -68,6 +68,8 @@ void asi_unmap(struct asi *asi, void *addr, size_t len, bool flush_tlb);
 void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len);
 void asi_sync_mapping(struct asi *asi, void *addr, size_t len);
 void asi_do_lazy_map(struct asi *asi, size_t addr);
+void asi_clear_user_pgd(struct mm_struct *mm, size_t addr);
+void asi_clear_user_p4d(struct mm_struct *mm, size_t addr);
 
 static inline void asi_init_thread_state(struct thread_struct *thread)
 {

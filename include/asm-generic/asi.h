@@ -6,6 +6,7 @@
 
 /* ASI class flags */
 #define ASI_MAP_STANDARD_NONSENSITIVE	1
+#define ASI_MAP_ALL_USERSPACE		2
 
 #ifndef CONFIG_ADDRESS_SPACE_ISOLATION
 
@@ -84,6 +85,12 @@ void asi_unmap(struct asi *asi, void *addr, size_t len, bool flush_tlb) { }
 
 static inline
 void asi_do_lazy_map(struct asi *asi, size_t addr) { }
+
+static inline
+void asi_clear_user_pgd(struct mm_struct *mm, size_t addr) { }
+
+static inline
+void asi_clear_user_p4d(struct mm_struct *mm, size_t addr) { }
 
 static inline
 void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len) { }

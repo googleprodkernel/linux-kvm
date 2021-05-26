@@ -296,6 +296,7 @@ static inline void free_pud_range(struct mmu_gather *tlb, p4d_t *p4d,
 
 	pud = pud_offset(p4d, start);
 	p4d_clear(p4d);
+	asi_clear_user_p4d(tlb->mm, start);
 	pud_free_tlb(tlb, pud, start);
 	mm_dec_nr_puds(tlb->mm);
 }
@@ -330,6 +331,7 @@ static inline void free_p4d_range(struct mmu_gather *tlb, pgd_t *pgd,
 
 	p4d = p4d_offset(pgd, start);
 	pgd_clear(pgd);
+	asi_clear_user_pgd(tlb->mm, start);
 	p4d_free_tlb(tlb, p4d, start);
 }
 

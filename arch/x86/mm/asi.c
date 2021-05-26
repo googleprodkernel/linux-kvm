@@ -702,6 +702,41 @@ static bool is_addr_in_local_nonsensitive_range(size_t addr)
 	       addr < VMALLOC_GLOBAL_NONSENSITIVE_START;
 }
 
+static void asi_clone_user_pgd(struct asi *asi, size_t addr)
+{
+	pgd_t *src = pgd_offset_pgd(asi->mm->pgd, addr);
+	pgd_t *dst = pgd_offset_pgd(asi->pgd, addr);
+	pgdval_t old_src, curr_src;
+
+	if (pgd_val(*dst))
+		return;
+
+	VM_BUG_ON(!irqs_disabled());
+
+	/*
+	 * This synchronizes against the PGD entry getting cleared by
+	 * free_pgd_range(). That path has the following steps:
+	 * 1. pgd_clear
+	 * 2. asi_clear_user_pgd
+	 * 3. Remote TLB Flush
+	 * 4. Free page tables
+	 *
+	 * (3) will be blocked for the duration of this function because the
+	 * IPI will remain pending until interrupts are re-enabled.
+	 *
+	 * The following loop ensures that if we read the PGD value before
+	 * (1) and write it after (2), we will re-read the value and write
+	 * the new updated value.
+	 */
+	curr_src = pgd_val(*src);
+	do {
+		set_pgd(dst, __pgd(curr_src));
+		smp_mb();
+		old_src = curr_src;
+		curr_src = pgd_val(*src);
+	} while (old_src != curr_src);
+}
+
 void asi_do_lazy_map(struct asi *asi, size_t addr)
 {
 	if (!static_cpu_has(X86_FEATURE_ASI) || !asi)
@@ -710,6 +745,9 @@ void asi_do_lazy_map(struct asi *asi, size_t addr)
 	if ((asi->class->flags & ASI_MAP_STANDARD_NONSENSITIVE) &&
 	    is_addr_in_local_nonsensitive_range(addr))
 		asi_clone_pgd(asi->pgd, asi->mm->asi[0].pgd, addr);
+	else if ((asi->class->flags & ASI_MAP_ALL_USERSPACE) &&
+		 addr < TASK_SIZE_MAX)
+		asi_clone_user_pgd(asi, addr);
 }
 
 /*
@@ -765,4 +803,47 @@ void __init asi_vmalloc_init(void)
 
 	VM_BUG_ON(vmalloc_local_nonsensitive_end >= VMALLOC_END);
 	VM_BUG_ON(vmalloc_global_nonsensitive_start <= VMALLOC_START);
+}
+
+static void __asi_clear_user_pgd(struct mm_struct *mm, size_t addr)
+{
+	uint i;
+
+	if (!static_cpu_has(X86_FEATURE_ASI) || !mm_asi_enabled(mm))
+		return;
+
+	/*
+	 * This function is called right after pgd_clear/p4d_clear.
+	 * We need to be sure that the preceding pXd_clear is visible before
+	 * the ASI pgd clears below. Compare with asi_clone_user_pgd().
+	 */
+	smp_mb__before_atomic();
+
+	/*
+	 * We need to ensure that the ASI PGD tables do not get freed from
+	 * under us. We can potentially use RCU to avoid that, but since
+	 * this path is probably not going to be too performance sensitive,
+	 * so we just acquire the lock to block asi_destroy().
+	 */
+	mutex_lock(&mm->asi_init_lock);
+
+	for (i = 1; i < ASI_MAX_NUM; i++)
+		if (mm->asi[i].class &&
+		    (mm->asi[i].class->flags & ASI_MAP_ALL_USERSPACE))
+			set_pgd(pgd_offset_pgd(mm->asi[i].pgd, addr),
+				native_make_pgd(0));
+
+	mutex_unlock(&mm->asi_init_lock);
+}
+
+void asi_clear_user_pgd(struct mm_struct *mm, size_t addr)
+{
+	if (pgtable_l5_enabled())
+		__asi_clear_user_pgd(mm, addr);
+}
+
+void asi_clear_user_p4d(struct mm_struct *mm, size_t addr)
+{
+	if (!pgtable_l5_enabled())
+		__asi_clear_user_pgd(mm, addr);
 }
