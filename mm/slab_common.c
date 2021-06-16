@@ -42,6 +42,13 @@ static void slab_caches_to_rcu_destroy_workfn(struct work_struct *work);
 static DECLARE_WORK(slab_caches_to_rcu_destroy_work,
 		    slab_caches_to_rcu_destroy_workfn);
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+static DEFINE_IDA(nonsensitive_cache_ids);
+static uint max_num_local_slab_caches = 32;
+
+#endif
+
 /*
  * Set of flags that will prevent slab merging
  */
@@ -131,6 +138,69 @@ int __kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t nr,
 	return i;
 }
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+LIST_HEAD(slab_root_caches);
+
+static void init_local_cache_info(struct kmem_cache *s, struct kmem_cache *root)
+{
+	if (root) {
+		s->local_cache_info.root_cache = root;
+		list_add(&s->local_cache_info.children_node,
+			 &root->local_cache_info.children);
+	} else {
+		s->local_cache_info.cache_id = -1;
+		INIT_LIST_HEAD(&s->local_cache_info.children);
+		list_add(&s->root_caches_node, &slab_root_caches);
+	}
+}
+
+static void cleanup_local_cache_info(struct kmem_cache *s)
+{
+	if (is_root_cache(s)) {
+		VM_BUG_ON(!list_empty(&s->local_cache_info.children));
+
+		list_del(&s->root_caches_node);
+		if (s->local_cache_info.cache_id >= 0)
+			ida_free(&nonsensitive_cache_ids,
+				 s->local_cache_info.cache_id);
+	} else {
+		struct mm_struct *mm = s->local_cache_info.mm;
+		struct kmem_cache *root_cache = s->local_cache_info.root_cache;
+		int id = root_cache->local_cache_info.cache_id;
+
+		list_del(&s->local_cache_info.children_node);
+		if (mm) {
+			struct kmem_cache **local_caches =
+				rcu_dereference_protected(mm->local_slab_caches,
+						lockdep_is_held(&slab_mutex));
+			local_caches[id] = NULL;
+		}
+	}
+}
+
+void set_nonsensitive_cache_params(struct kmem_cache *s)
+{
+	if (s->flags & SLAB_GLOBAL_NONSENSITIVE) {
+		s->allocflags |= __GFP_GLOBAL_NONSENSITIVE;
+		VM_BUG_ON(!is_root_cache(s));
+	} else if (s->flags & SLAB_LOCAL_NONSENSITIVE) {
+		if (is_root_cache(s))
+			s->local_cache_info.sensitive_cache = s;
+		else
+			s->allocflags |= __GFP_LOCAL_NONSENSITIVE;
+	}
+}
+
+#else
+
+static inline
+void init_local_cache_info(struct kmem_cache *s, struct kmem_cache *root) { }
+
+static inline void cleanup_local_cache_info(struct kmem_cache *s) { }
+
+#endif /* CONFIG_ADDRESS_SPACE_ISOLATION */
+
 /*
  * Figure out what the alignment of the objects will be given a set of
  * flags, a user specified alignment and the size of the objects.
@@ -168,6 +238,9 @@ int slab_unmergeable(struct kmem_cache *s)
 	if (slab_nomerge || (s->flags & SLAB_NEVER_MERGE))
 		return 1;
 
+	if (!is_root_cache(s))
+		return 1;
+
 	if (s->ctor)
 		return 1;
 
@@ -202,7 +275,7 @@ struct kmem_cache *find_mergeable(unsigned int size, unsigned int align,
 	if (flags & SLAB_NEVER_MERGE)
 		return NULL;
 
-	list_for_each_entry_reverse(s, &slab_caches, list) {
+	list_for_each_entry_reverse(s, &slab_root_caches, root_caches_node) {
 		if (slab_unmergeable(s))
 			continue;
 
@@ -254,6 +327,8 @@ static struct kmem_cache *create_cache(const char *name,
 	s->useroffset = useroffset;
 	s->usersize = usersize;
 
+	init_local_cache_info(s, root_cache);
+
 	err = __kmem_cache_create(s, flags);
 	if (err)
 		goto out_free_cache;
@@ -266,6 +341,7 @@ out:
 	return s;
 
 out_free_cache:
+	cleanup_local_cache_info(s);
 	kmem_cache_free(kmem_cache, s);
 	goto out;
 }
@@ -459,6 +535,7 @@ static int shutdown_cache(struct kmem_cache *s)
 		return -EBUSY;
 
 	list_del(&s->list);
+	cleanup_local_cache_info(s);
 
 	if (s->flags & SLAB_TYPESAFE_BY_RCU) {
 #ifdef SLAB_SUPPORTS_SYSFS
@@ -479,6 +556,36 @@ static int shutdown_cache(struct kmem_cache *s)
 
 	return 0;
 }
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+static int shutdown_child_caches(struct kmem_cache *s)
+{
+	struct kmem_cache *c, *c2;
+	int r;
+
+	VM_BUG_ON(!is_root_cache(s));
+
+	lockdep_assert_held(&slab_mutex);
+
+	list_for_each_entry_safe(c, c2, &s->local_cache_info.children,
+				 local_cache_info.children_node) {
+		r = shutdown_cache(c);
+		if (r)
+			return r;
+	}
+
+	return 0;
+}
+
+#else
+
+static inline int shutdown_child_caches(struct kmem_cache *s)
+{
+	return 0;
+}
+
+#endif /* CONFIG_ADDRESS_SPACE_ISOLATION */
 
 void slab_kmem_cache_release(struct kmem_cache *s)
 {
@@ -501,7 +608,10 @@ void kmem_cache_destroy(struct kmem_cache *s)
 	if (s->refcount)
 		goto out_unlock;
 
-	err = shutdown_cache(s);
+	err = shutdown_child_caches(s);
+	if (!err)
+		err = shutdown_cache(s);
+
 	if (err) {
 		pr_err("%s %s: Slab cache still has objects\n",
 		       __func__, s->name);
@@ -650,6 +760,8 @@ void __init create_boot_cache(struct kmem_cache *s, const char *name,
 
 	s->useroffset = useroffset;
 	s->usersize = usersize;
+
+	init_local_cache_info(s, NULL);
 
 	err = __kmem_cache_create(s, flags);
 
@@ -897,6 +1009,13 @@ new_kmalloc_cache(int idx, enum kmalloc_cache_type type, slab_flags_t flags)
 	 */
 	if (IS_ENABLED(CONFIG_MEMCG_KMEM) && (type == KMALLOC_NORMAL))
 		caches[type][idx]->refcount = -1;
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+	if (flags & SLAB_NONSENSITIVE)
+		caches[type][idx]->local_cache_info.sensitive_cache =
+						kmalloc_caches[type][idx];
+#endif
 }
 
 /*
@@ -1086,17 +1205,35 @@ static void print_slabinfo_header(struct seq_file *m)
 void *slab_start(struct seq_file *m, loff_t *pos)
 {
 	mutex_lock(&slab_mutex);
-	return seq_list_start(&slab_caches, *pos);
+	return seq_list_start(&slab_root_caches, *pos);
 }
 
 void *slab_next(struct seq_file *m, void *p, loff_t *pos)
 {
-	return seq_list_next(p, &slab_caches, pos);
+	return seq_list_next(p, &slab_root_caches, pos);
 }
 
 void slab_stop(struct seq_file *m, void *p)
 {
 	mutex_unlock(&slab_mutex);
+}
+
+static void
+accumulate_children_slabinfo(struct kmem_cache *s, struct slabinfo *info)
+{
+	struct kmem_cache *c;
+	struct slabinfo sinfo;
+
+	for_each_child_cache(c, s) {
+		memset(&sinfo, 0, sizeof(sinfo));
+		get_slabinfo(c, &sinfo);
+
+		info->active_slabs += sinfo.active_slabs;
+		info->num_slabs += sinfo.num_slabs;
+		info->shared_avail += sinfo.shared_avail;
+		info->active_objs += sinfo.active_objs;
+		info->num_objs += sinfo.num_objs;
+	}
 }
 
 static void cache_show(struct kmem_cache *s, struct seq_file *m)
@@ -1106,8 +1243,10 @@ static void cache_show(struct kmem_cache *s, struct seq_file *m)
 	memset(&sinfo, 0, sizeof(sinfo));
 	get_slabinfo(s, &sinfo);
 
+	accumulate_children_slabinfo(s, &sinfo);
+
 	seq_printf(m, "%-17s %6lu %6lu %6u %4u %4d",
-		   s->name, sinfo.active_objs, sinfo.num_objs, s->size,
+		   cache_name(s), sinfo.active_objs, sinfo.num_objs, s->size,
 		   sinfo.objects_per_slab, (1 << sinfo.cache_order));
 
 	seq_printf(m, " : tunables %4u %4u %4u",
@@ -1120,9 +1259,9 @@ static void cache_show(struct kmem_cache *s, struct seq_file *m)
 
 static int slab_show(struct seq_file *m, void *p)
 {
-	struct kmem_cache *s = list_entry(p, struct kmem_cache, list);
+	struct kmem_cache *s = list_entry(p, struct kmem_cache, root_caches_node);
 
-	if (p == slab_caches.next)
+	if (p == slab_root_caches.next)
 		print_slabinfo_header(m);
 	cache_show(s, m);
 	return 0;
@@ -1148,14 +1287,14 @@ void dump_unreclaimable_slab(void)
 	pr_info("Unreclaimable slab info:\n");
 	pr_info("Name                      Used          Total\n");
 
-	list_for_each_entry(s, &slab_caches, list) {
+	list_for_each_entry(s, &slab_root_caches, root_caches_node) {
 		if (s->flags & SLAB_RECLAIM_ACCOUNT)
 			continue;
 
 		get_slabinfo(s, &sinfo);
 
 		if (sinfo.num_objs > 0)
-			pr_info("%-17s %10luKB %10luKB\n", s->name,
+			pr_info("%-17s %10luKB %10luKB\n", cache_name(s),
 				(sinfo.active_objs * s->size) / 1024,
 				(sinfo.num_objs * s->size) / 1024);
 	}
@@ -1361,3 +1500,209 @@ int should_failslab(struct kmem_cache *s, gfp_t gfpflags)
 	return 0;
 }
 ALLOW_ERROR_INJECTION(should_failslab, ERRNO);
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+static int resize_local_slab_caches_array(struct mm_struct *mm, gfp_t flags)
+{
+	struct kmem_cache **new_array;
+	struct kmem_cache **old_array =
+		rcu_dereference_protected(mm->local_slab_caches,
+					  lockdep_is_held(&slab_mutex));
+
+	new_array = kcalloc(max_num_local_slab_caches,
+			    sizeof(struct kmem_cache *), flags);
+	if (!new_array)
+		return -ENOMEM;
+
+	if (old_array)
+		memcpy(new_array, old_array, mm->local_slab_caches_array_size *
+					     sizeof(struct kmem_cache *));
+
+	rcu_assign_pointer(mm->local_slab_caches, new_array);
+	smp_store_release(&mm->local_slab_caches_array_size,
+			  max_num_local_slab_caches);
+
+	if (old_array) {
+		synchronize_rcu();
+		kfree(old_array);
+	}
+
+	return 0;
+}
+
+static int get_or_alloc_cache_id(struct kmem_cache *root_cache, gfp_t flags)
+{
+	int id = root_cache->local_cache_info.cache_id;
+
+	if (id >= 0)
+		return id;
+
+	id = ida_alloc_max(&nonsensitive_cache_ids,
+			   max_num_local_slab_caches - 1, flags);
+	if (id == -ENOSPC) {
+		max_num_local_slab_caches *= 2;
+		id = ida_alloc_max(&nonsensitive_cache_ids,
+				   max_num_local_slab_caches - 1, flags);
+	}
+
+	if (id >= 0)
+		root_cache->local_cache_info.cache_id = id;
+
+	return id;
+}
+
+static struct kmem_cache *create_local_kmem_cache(struct kmem_cache *root_cache,
+						  struct mm_struct *mm,
+						  gfp_t flags)
+{
+	char *name;
+	struct kmem_cache *s = NULL;
+	slab_flags_t slab_flags = root_cache->flags & CACHE_CREATE_MASK;
+	struct kmem_cache **cache_ptr;
+
+	flags &= GFP_RECLAIM_MASK;
+
+	mutex_lock(&slab_mutex);
+
+	if (mm_asi_enabled(mm)) {
+		struct kmem_cache **caches;
+		int id = get_or_alloc_cache_id(root_cache, flags);
+
+		if (id < 0)
+			goto out;
+
+		flags |= __GFP_ACCOUNT;
+
+		if (mm->local_slab_caches_array_size <= id &&
+		    resize_local_slab_caches_array(mm, flags) < 0)
+			goto out;
+
+		caches = rcu_dereference_protected(mm->local_slab_caches,
+						   lockdep_is_held(&slab_mutex));
+		cache_ptr = &caches[id];
+		if (*cache_ptr) {
+			s = *cache_ptr;
+			goto out;
+		}
+
+		slab_flags &= ~SLAB_GLOBAL_NONSENSITIVE;
+		name = kasprintf(flags, "%s(%d:%s)", root_cache->name,
+				 task_pid_nr(mm->owner), mm->owner->comm);
+		if (!name)
+			goto out;
+
+	} else {
+		cache_ptr = &root_cache->local_cache_info.sensitive_cache;
+		if (*cache_ptr) {
+			s = *cache_ptr;
+			goto out;
+		}
+
+		slab_flags &= ~SLAB_NONSENSITIVE;
+		name = kasprintf(flags, "%s(sensitive)", root_cache->name);
+		if (!name)
+			goto out;
+	}
+
+	s = create_cache(name,
+			 root_cache->object_size,
+			 root_cache->align,
+			 slab_flags,
+			 root_cache->useroffset, root_cache->usersize,
+			 root_cache->ctor, root_cache);
+	if (IS_ERR(s)) {
+		pr_info("Unable to create child kmem cache %s. Err %ld",
+			name, PTR_ERR(s));
+		kfree(name);
+		s = NULL;
+		goto out;
+	}
+
+	if (mm_asi_enabled(mm))
+		s->local_cache_info.mm = mm;
+
+	smp_store_release(cache_ptr, s);
+out:
+	mutex_unlock(&slab_mutex);
+
+	return s;
+}
+
+struct kmem_cache *get_local_kmem_cache(struct kmem_cache *s,
+					struct mm_struct *mm, gfp_t flags)
+{
+	struct kmem_cache *local_cache = NULL;
+
+	if (!(s->flags & SLAB_LOCAL_NONSENSITIVE) || !is_root_cache(s))
+		return s;
+
+	if (mm_asi_enabled(mm)) {
+		struct kmem_cache **caches;
+		int id = READ_ONCE(s->local_cache_info.cache_id);
+		uint array_size = smp_load_acquire(
+					&mm->local_slab_caches_array_size);
+
+		if (id >= 0 && array_size > id) {
+			rcu_read_lock();
+			caches = rcu_dereference(mm->local_slab_caches);
+			local_cache = smp_load_acquire(&caches[id]);
+			rcu_read_unlock();
+		}
+	} else {
+		local_cache =
+			smp_load_acquire(&s->local_cache_info.sensitive_cache);
+	}
+
+	if (!local_cache)
+		local_cache = create_local_kmem_cache(s, mm, flags);
+
+	return local_cache;
+}
+
+void free_local_slab_caches(struct mm_struct *mm)
+{
+	uint i;
+	struct kmem_cache **caches =
+		rcu_dereference_protected(mm->local_slab_caches,
+					  atomic_read(&mm->mm_count) == 0);
+
+	if (!caches)
+		return;
+
+	cpus_read_lock();
+	mutex_lock(&slab_mutex);
+
+	for (i = 0; i < mm->local_slab_caches_array_size; i++)
+		if (caches[i])
+			WARN_ON(shutdown_cache(caches[i]));
+
+	mutex_unlock(&slab_mutex);
+	cpus_read_unlock();
+
+	kfree(caches);
+}
+
+int kmem_cache_precreate_local(struct kmem_cache *s)
+{
+	VM_BUG_ON(!is_root_cache(s));
+	VM_BUG_ON(!in_task());
+	might_sleep();
+
+	return get_local_kmem_cache(s, current->mm, GFP_KERNEL) ? 0 : -ENOMEM;
+}
+EXPORT_SYMBOL(kmem_cache_precreate_local);
+
+int kmem_cache_precreate_local_kmalloc(size_t size, gfp_t flags)
+{
+	struct kmem_cache *s = kmalloc_slab(size,
+					    flags | __GFP_LOCAL_NONSENSITIVE);
+
+	if (ZERO_OR_NULL_PTR(s))
+		return 0;
+
+	return kmem_cache_precreate_local(s);
+}
+EXPORT_SYMBOL(kmem_cache_precreate_local_kmalloc);
+
+#endif

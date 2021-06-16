@@ -37,9 +37,21 @@ static inline void mmgrab(struct mm_struct *mm)
 }
 
 extern void __mmdrop(struct mm_struct *mm);
+extern void mmdrop_async(struct mm_struct *mm);
 
 static inline void mmdrop(struct mm_struct *mm)
 {
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	/*
+	 * We really only need to do this if we are in an atomic context.
+	 * Unfortunately, there doesn't seem to be a reliable way to detect
+	 * atomic context across all kernel configs. So we just always do async.
+	 */
+	if (rcu_access_pointer(mm->local_slab_caches)) {
+		mmdrop_async(mm);
+		return;
+	}
+#endif
 	/*
 	 * The implicit full barrier implied by atomic_dec_and_test() is
 	 * required by the membarrier system call before returning to

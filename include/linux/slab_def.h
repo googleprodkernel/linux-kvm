@@ -81,6 +81,10 @@ struct kmem_cache {
 	unsigned int *random_seq;
 #endif
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	struct kmem_local_cache_info local_cache_info;
+#endif
+
 	unsigned int useroffset;	/* Usercopy region offset */
 	unsigned int usersize;		/* Usercopy region size */
 

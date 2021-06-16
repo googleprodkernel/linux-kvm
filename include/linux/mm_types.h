@@ -517,6 +517,10 @@ struct mm_struct {
 
 		struct asi asi[ASI_MAX_NUM];
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+		struct kmem_cache * __rcu *local_slab_caches;
+		uint local_slab_caches_array_size;
+#endif
 		/**
 		 * @mm_users: The number of users including userspace.
 		 *

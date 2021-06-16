@@ -5,6 +5,45 @@
  * Internal slab definitions
  */
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+struct kmem_local_cache_info {
+	/* Valid for child caches. NULL for the root cache itself. */
+	struct kmem_cache *root_cache;
+	union {
+		/* For root caches */
+		struct {
+			int cache_id;
+			struct list_head __root_caches_node;
+			struct list_head children;
+			/*
+			 * For SLAB_LOCAL_NONSENSITIVE root caches, this points
+			 * to the cache to be used for local non-sensitive
+			 * allocations from processes without ASI enabled.
+			 *
+			 * For root caches with only SLAB_LOCAL_NONSENSITIVE,
+			 * the root cache itself is used as the sensitive cache.
+			 *
+			 * For root caches with both SLAB_LOCAL_NONSENSITIVE and
+			 * SLAB_GLOBAL_NONSENSITIVE, the sensitive cache will be
+			 * a child cache allocated on-demand.
+			 *
+			 * For non-sensiitve kmalloc caches, the sensitive cache
+			 * will just be the corresponding regular kmalloc cache.
+			 */
+			struct kmem_cache *sensitive_cache;
+		};
+
+		/* For child (process-local) caches */
+		struct {
+			struct mm_struct *mm;
+			struct list_head children_node;
+		};
+	};
+};
+
+#endif
+
 #ifdef CONFIG_SLOB
 /*
  * Common fields provided in kmem_cache by all slab allocators
@@ -128,8 +167,7 @@ static inline slab_flags_t kmem_cache_flags(unsigned int object_size,
 }
 #endif
 
-/* This will also include SLAB_LOCAL_NONSENSITIVE in a later patch. */
-#define SLAB_NONSENSITIVE SLAB_GLOBAL_NONSENSITIVE
+#define SLAB_NONSENSITIVE (SLAB_GLOBAL_NONSENSITIVE | SLAB_LOCAL_NONSENSITIVE)
 
 /* Legal flag mask for kmem_cache_create(), for various configurations */
 #define SLAB_CORE_FLAGS (SLAB_HWCACHE_ALIGN | SLAB_CACHE_DMA | \
@@ -250,6 +288,99 @@ static inline bool kmem_cache_debug_flags(struct kmem_cache *s, slab_flags_t fla
 		return s->flags & flags;
 	return false;
 }
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+/* List of all root caches. */
+extern struct list_head		slab_root_caches;
+#define root_caches_node	local_cache_info.__root_caches_node
+
+/*
+ * Iterate over all child caches of the given root cache. The caller must hold
+ * slab_mutex.
+ */
+#define for_each_child_cache(iter, root) \
+	list_for_each_entry(iter, &(root)->local_cache_info.children, \
+			    local_cache_info.children_node)
+
+static inline bool is_root_cache(struct kmem_cache *s)
+{
+	return !s->local_cache_info.root_cache;
+}
+
+static inline bool slab_equal_or_root(struct kmem_cache *s,
+				      struct kmem_cache *p)
+{
+	return p == s || p == s->local_cache_info.root_cache;
+}
+
+/*
+ * We use suffixes to the name in child caches because we can't have caches
+ * created in the system with the same name. But when we print them
+ * locally, better refer to them with the base name
+ */
+static inline const char *cache_name(struct kmem_cache *s)
+{
+	if (!is_root_cache(s))
+		s = s->local_cache_info.root_cache;
+	return s->name;
+}
+
+static inline struct kmem_cache *get_root_cache(struct kmem_cache *s)
+{
+	if (is_root_cache(s))
+		return s;
+	return s->local_cache_info.root_cache;
+}
+
+static inline
+void restore_page_nonsensitive_metadata(struct page *page,
+					struct kmem_cache *cachep)
+{
+	if (PageLocalNonSensitive(page)) {
+		VM_BUG_ON(is_root_cache(cachep));
+		page->asi_mm = cachep->local_cache_info.mm;
+	}
+}
+
+void set_nonsensitive_cache_params(struct kmem_cache *s);
+
+#else /* CONFIG_ADDRESS_SPACE_ISOLATION */
+
+#define slab_root_caches	slab_caches
+#define root_caches_node	list
+
+#define for_each_child_cache(iter, root) \
+	for ((void)(iter), (void)(root); 0; )
+
+static inline bool is_root_cache(struct kmem_cache *s)
+{
+	return true;
+}
+
+static inline bool slab_equal_or_root(struct kmem_cache *s,
+				      struct kmem_cache *p)
+{
+	return s == p;
+}
+
+static inline const char *cache_name(struct kmem_cache *s)
+{
+	return s->name;
+}
+
+static inline struct kmem_cache *get_root_cache(struct kmem_cache *s)
+{
+	return s;
+}
+
+static inline void restore_page_nonsensitive_metadata(struct page *page,
+						      struct kmem_cache *cachep)
+{ }
+
+static inline void set_nonsensitive_cache_params(struct kmem_cache *s) { }
+
+#endif /* CONFIG_ADDRESS_SPACE_ISOLATION */
 
 #ifdef CONFIG_MEMCG_KMEM
 int memcg_alloc_page_obj_cgroups(struct page *page, struct kmem_cache *s,
@@ -449,11 +580,12 @@ static inline struct kmem_cache *cache_from_obj(struct kmem_cache *s, void *x)
 	struct kmem_cache *cachep;
 
 	if (!IS_ENABLED(CONFIG_SLAB_FREELIST_HARDENED) &&
+	    !(s->flags & SLAB_LOCAL_NONSENSITIVE) &&
 	    !kmem_cache_debug_flags(s, SLAB_CONSISTENCY_CHECKS))
 		return s;
 
 	cachep = virt_to_cache(x);
-	if (WARN(cachep && cachep != s,
+	if (WARN(cachep && !slab_equal_or_root(cachep, s),
 		  "%s: Wrong slab cache. %s but object is from %s\n",
 		  __func__, s->name, cachep->name))
 		print_tracking(cachep, x);
@@ -501,10 +633,23 @@ static inline struct kmem_cache *slab_pre_alloc_hook(struct kmem_cache *s,
 	if (static_asi_enabled()) {
 		VM_BUG_ON(!(s->flags & SLAB_GLOBAL_NONSENSITIVE) &&
 			  (flags & __GFP_GLOBAL_NONSENSITIVE));
+		VM_BUG_ON(!(s->flags & SLAB_LOCAL_NONSENSITIVE) &&
+			  (flags & __GFP_LOCAL_NONSENSITIVE));
+		VM_BUG_ON((s->flags & SLAB_NONSENSITIVE) == SLAB_NONSENSITIVE &&
+			   !(flags & (__GFP_LOCAL_NONSENSITIVE |
+				      __GFP_GLOBAL_NONSENSITIVE)));
 	}
 
 	if (should_failslab(s, flags))
 		return NULL;
+
+	if (static_asi_enabled() &&
+	    (!(flags & __GFP_GLOBAL_NONSENSITIVE) &&
+	      (s->flags & SLAB_LOCAL_NONSENSITIVE))) {
+		s = get_local_kmem_cache(s, current->mm, flags);
+		if (!s)
+			return NULL;
+	}
 
 	if (!memcg_slab_pre_alloc_hook(s, objcgp, size, flags))
 		return NULL;

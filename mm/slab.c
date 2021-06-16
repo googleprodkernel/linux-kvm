@@ -1403,6 +1403,8 @@ static void kmem_freepages(struct kmem_cache *cachep, struct page *page)
 	/* In union with page->mapping where page allocator expects NULL */
 	page->slab_cache = NULL;
 
+	restore_page_nonsensitive_metadata(page, cachep);
+
 	if (current->reclaim_state)
 		current->reclaim_state->reclaimed_slab += 1 << order;
 	unaccount_slab_page(page, order, cachep);
@@ -2061,11 +2063,9 @@ done:
 		cachep->allocflags |= GFP_DMA32;
 	if (flags & SLAB_RECLAIM_ACCOUNT)
 		cachep->allocflags |= __GFP_RECLAIMABLE;
-	if (flags & SLAB_GLOBAL_NONSENSITIVE)
-		cachep->allocflags |= __GFP_GLOBAL_NONSENSITIVE;
 	cachep->size = size;
 	cachep->reciprocal_buffer_size = reciprocal_value(size);
-
+	set_nonsensitive_cache_params(cachep);
 #if DEBUG
 	/*
 	 * If we're going to use the generic kernel_map_pages()
@@ -3846,8 +3846,8 @@ fail:
 }
 
 /* Always called with the slab_mutex held */
-static int do_tune_cpucache(struct kmem_cache *cachep, int limit,
-			    int batchcount, int shared, gfp_t gfp)
+static int __do_tune_cpucache(struct kmem_cache *cachep, int limit,
+			      int batchcount, int shared, gfp_t gfp)
 {
 	struct array_cache __percpu *cpu_cache, *prev;
 	int cpu;
@@ -3892,6 +3892,29 @@ setup_node:
 	return setup_kmem_cache_nodes(cachep, gfp);
 }
 
+static int do_tune_cpucache(struct kmem_cache *cachep, int limit,
+			    int batchcount, int shared, gfp_t gfp)
+{
+	int ret;
+	struct kmem_cache *c;
+
+	ret = __do_tune_cpucache(cachep, limit, batchcount, shared, gfp);
+
+	if (slab_state < FULL)
+		return ret;
+
+	if ((ret < 0) || !is_root_cache(cachep))
+		return ret;
+
+	lockdep_assert_held(&slab_mutex);
+	for_each_child_cache(c, cachep) {
+		/* return value determined by the root cache only */
+		__do_tune_cpucache(c, limit, batchcount, shared, gfp);
+	}
+
+	return ret;
+}
+
 /* Called with slab_mutex held always */
 static int enable_cpucache(struct kmem_cache *cachep, gfp_t gfp)
 {
@@ -3903,6 +3926,14 @@ static int enable_cpucache(struct kmem_cache *cachep, gfp_t gfp)
 	err = cache_random_seq_create(cachep, cachep->num, gfp);
 	if (err)
 		goto end;
+
+	if (!is_root_cache(cachep)) {
+		struct kmem_cache *root = get_root_cache(cachep);
+
+		limit = root->limit;
+		shared = root->shared;
+		batchcount = root->batchcount;
+	}
 
 	/*
 	 * The head array serves three purposes:

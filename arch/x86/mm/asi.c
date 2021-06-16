@@ -4,6 +4,7 @@
 #include <linux/memblock.h>
 #include <linux/memcontrol.h>
 #include <linux/moduleparam.h>
+#include <linux/slab.h>
 
 #include <asm/asi.h>
 #include <asm/pgalloc.h>
@@ -455,6 +456,8 @@ int asi_init_mm_state(struct mm_struct *mm)
 
 	memset(mm->asi, 0, sizeof(mm->asi));
 	mm->asi_enabled = false;
+	RCU_INIT_POINTER(mm->local_slab_caches, NULL);
+	mm->local_slab_caches_array_size = 0;
 
 	/*
 	 * TODO: In addition to a cgroup flag, we may also want a per-process
@@ -481,6 +484,8 @@ void asi_free_mm_state(struct mm_struct *mm)
 {
 	if (!boot_cpu_has(X86_FEATURE_ASI) || !mm->asi_enabled)
 		return;
+
+	free_local_slab_caches(mm);
 
 	asi_free_pgd_range(&mm->asi[0], pgd_index(ASI_LOCAL_MAP),
 			   pgd_index(ASI_LOCAL_MAP +

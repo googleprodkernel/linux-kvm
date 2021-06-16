@@ -93,6 +93,8 @@
 /* Avoid kmemleak tracing */
 #define SLAB_NOLEAKTRACE	((slab_flags_t __force)0x00800000U)
 
+/* 0x01000000U is used below for SLAB_LOCAL_NONSENSITIVE */
+
 /* Fault injection mark */
 #ifdef CONFIG_FAILSLAB
 # define SLAB_FAILSLAB		((slab_flags_t __force)0x02000000U)
@@ -121,8 +123,10 @@
 #define SLAB_DEACTIVATED	((slab_flags_t __force)0x10000000U)
 
 #ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+#define SLAB_LOCAL_NONSENSITIVE ((slab_flags_t __force)0x01000000U)
 #define SLAB_GLOBAL_NONSENSITIVE ((slab_flags_t __force)0x20000000U)
 #else
+#define SLAB_LOCAL_NONSENSITIVE 0
 #define SLAB_GLOBAL_NONSENSITIVE 0
 #endif
 
@@ -377,7 +381,8 @@ static __always_inline struct kmem_cache *get_kmalloc_cache(gfp_t flags,
 {
 #ifdef CONFIG_ADDRESS_SPACE_ISOLATION
 
-	if (static_asi_enabled() && (flags & __GFP_GLOBAL_NONSENSITIVE))
+	if (static_asi_enabled() &&
+	    (flags & (__GFP_GLOBAL_NONSENSITIVE | __GFP_LOCAL_NONSENSITIVE)))
 		return nonsensitive_kmalloc_caches[kmalloc_type(flags)][index];
 #endif
 	return kmalloc_caches[kmalloc_type(flags)][index];
@@ -798,6 +803,37 @@ int slab_dead_cpu(unsigned int cpu);
 #else
 #define slab_prepare_cpu	NULL
 #define slab_dead_cpu		NULL
+#endif
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+struct kmem_cache *get_local_kmem_cache(struct kmem_cache *s,
+					struct mm_struct *mm, gfp_t flags);
+void free_local_slab_caches(struct mm_struct *mm);
+int kmem_cache_precreate_local(struct kmem_cache *s);
+int kmem_cache_precreate_local_kmalloc(size_t size, gfp_t flags);
+
+#else
+
+static inline
+struct kmem_cache *get_local_kmem_cache(struct kmem_cache *s,
+					struct mm_struct *mm, gfp_t flags)
+{
+	return NULL;
+}
+
+static inline void free_local_slab_caches(struct mm_struct *mm) { }
+
+static inline int kmem_cache_precreate_local(struct kmem_cache *s)
+{
+	return 0;
+}
+
+static inline int kmem_cache_precreate_local_kmalloc(size_t size, gfp_t flags)
+{
+	return 0;
+}
+
 #endif
 
 #endif	/* _LINUX_SLAB_H */
