@@ -1292,7 +1292,8 @@ bool nmi_uaccess_okay(void)
 	if (loaded_mm != current_mm)
 		return false;
 
-	VM_WARN_ON_ONCE(current_mm->pgd != __va(read_cr3_pa()));
+	VM_WARN_ON_ONCE(current_mm->pgd != __va(read_cr3_pa()) &&
+			!is_asi_active());
 
 	return true;
 }
