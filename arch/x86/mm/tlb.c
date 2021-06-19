@@ -97,7 +97,12 @@
 # define PTI_CONSUMED_PCID_BITS	0
 #endif
 
-#define CR3_AVAIL_PCID_BITS (X86_CR3_PCID_BITS - PTI_CONSUMED_PCID_BITS)
+#define ASI_CONSUMED_PCID_BITS ASI_MAX_NUM_ORDER
+#define ASI_PCID_BITS_SHIFT CR3_AVAIL_PCID_BITS
+#define CR3_AVAIL_PCID_BITS (X86_CR3_PCID_BITS - PTI_CONSUMED_PCID_BITS - \
+			     ASI_CONSUMED_PCID_BITS)
+
+static_assert(TLB_NR_DYN_ASIDS < BIT(CR3_AVAIL_PCID_BITS));
 
 /*
  * ASIDs are zero-based: 0->MAX_AVAIL_ASID are valid.  -1 below to account
@@ -152,6 +157,34 @@ static inline u16 user_pcid(u16 asid)
 	ret |= 1 << X86_CR3_PTI_PCID_USER_BIT;
 #endif
 	return ret;
+}
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+u16 asi_pcid(struct asi *asi, u16 asid)
+{
+	return kern_pcid(asid) | (asi->pcid_index << ASI_PCID_BITS_SHIFT);
+}
+
+#else /* CONFIG_ADDRESS_SPACE_ISOLATION */
+
+u16 asi_pcid(struct asi *asi, u16 asid)
+{
+	return kern_pcid(asid);
+}
+
+#endif /* CONFIG_ADDRESS_SPACE_ISOLATION */
+
+unsigned long build_cr3_pcid(pgd_t *pgd, u16 pcid, bool noflush)
+{
+	u64 noflush_bit = 0;
+
+	if (!static_cpu_has(X86_FEATURE_PCID))
+		pcid = 0;
+	else if (noflush)
+		noflush_bit = CR3_NOFLUSH;
+
+	return __sme_pa(pgd) | pcid | noflush_bit;
 }
 
 inline unsigned long build_cr3(pgd_t *pgd, u16 asid)
@@ -1078,13 +1111,17 @@ unsigned long __get_current_cr3_fast(void)
 	pgd_t *pgd;
 	u16 asid = this_cpu_read(cpu_tlbstate.loaded_mm_asid);
 	struct asi *asi = asi_get_current();
+	u16 pcid;
 
-	if (asi)
+	if (asi) {
 		pgd = asi_pgd(asi);
-	else
+		pcid = asi_pcid(asi, asid);
+	} else {
 		pgd = this_cpu_read(cpu_tlbstate.loaded_mm)->pgd;
+		pcid = kern_pcid(asid);
+	}
 
-	cr3 = build_cr3(pgd, asid);
+	cr3 = build_cr3_pcid(pgd, pcid, false);
 
 	/* For now, be very restrictive about when this can be called. */
 	VM_WARN_ON(in_nmi() || preemptible());

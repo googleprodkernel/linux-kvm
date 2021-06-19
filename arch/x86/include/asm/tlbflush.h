@@ -260,6 +260,9 @@ static inline void arch_tlbbatch_add_mm(struct arch_tlbflush_unmap_batch *batch,
 extern void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch);
 
 unsigned long build_cr3(pgd_t *pgd, u16 asid);
+unsigned long build_cr3_pcid(pgd_t *pgd, u16 pcid, bool noflush);
+
+u16 asi_pcid(struct asi *asi, u16 asid);
 
 #endif /* !MODULE */
 
