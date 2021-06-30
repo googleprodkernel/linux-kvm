@@ -12,6 +12,7 @@
 #include <asm/invpcid.h>
 #include <asm/pti.h>
 #include <asm/processor-flags.h>
+#include <asm/asi.h>
 
 void __flush_tlb_all(void);
 
@@ -59,9 +60,20 @@ static inline void cr4_clear_bits(unsigned long mask)
  */
 #define TLB_NR_DYN_ASIDS	6
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+struct asi_tlb_context {
+	bool flush_pending;
+};
+
+#endif
+
 struct tlb_context {
 	u64 ctx_id;
 	u64 tlb_gen;
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	struct asi_tlb_context asi_context[ASI_MAX_NUM];
+#endif
 };
 
 struct tlb_state {
@@ -100,6 +112,10 @@ struct tlb_state {
 	 */
 	bool invalidate_other;
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	/* If set, ASI Exit needs to do a TLB flush during the CR3 switch */
+	bool kern_pcid_needs_flush;
+#endif
 	/*
 	 * Mask that contains TLB_NR_DYN_ASIDS+1 bits to indicate
 	 * the corresponding user PCID needs a flush next time we
@@ -262,7 +278,38 @@ extern void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch);
 unsigned long build_cr3(pgd_t *pgd, u16 asid);
 unsigned long build_cr3_pcid(pgd_t *pgd, u16 pcid, bool noflush);
 
+u16 kern_pcid(u16 asid);
 u16 asi_pcid(struct asi *asi, u16 asid);
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+static inline bool *__asi_tlb_flush_pending(struct asi *asi)
+{
+	struct tlb_state *tlb_state;
+	struct tlb_context *tlb_context;
+
+	tlb_state = this_cpu_ptr(&cpu_tlbstate);
+	tlb_context = &tlb_state->ctxs[tlb_state->loaded_mm_asid];
+	return &tlb_context->asi_context[asi->pcid_index].flush_pending;
+}
+
+static inline bool asi_get_and_clear_tlb_flush_pending(struct asi *asi)
+{
+	bool *tlb_flush_pending_ptr = __asi_tlb_flush_pending(asi);
+	bool tlb_flush_pending = READ_ONCE(*tlb_flush_pending_ptr);
+
+	if (tlb_flush_pending)
+		WRITE_ONCE(*tlb_flush_pending_ptr, false);
+
+	return tlb_flush_pending;
+}
+
+static inline void asi_clear_pending_tlb_flush(struct asi *asi)
+{
+	WRITE_ONCE(*__asi_tlb_flush_pending(asi), false);
+}
+
+#endif /* CONFIG_ADDRESS_SPACE_ISOLATION */
 
 #endif /* !MODULE */
 

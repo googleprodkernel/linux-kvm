@@ -114,7 +114,7 @@ static_assert(TLB_NR_DYN_ASIDS < BIT(CR3_AVAIL_PCID_BITS));
 /*
  * Given @asid, compute kPCID
  */
-static inline u16 kern_pcid(u16 asid)
+inline u16 kern_pcid(u16 asid)
 {
 	VM_WARN_ON_ONCE(asid > MAX_ASID_AVAILABLE);
 
@@ -166,12 +166,71 @@ u16 asi_pcid(struct asi *asi, u16 asid)
 	return kern_pcid(asid) | (asi->pcid_index << ASI_PCID_BITS_SHIFT);
 }
 
+static void invalidate_kern_pcid(void)
+{
+	this_cpu_write(cpu_tlbstate.kern_pcid_needs_flush, true);
+}
+
+static void invalidate_asi_pcid(struct asi *asi, u16 asid)
+{
+	uint i;
+	struct asi_tlb_context *asi_tlb_context;
+
+	if (!static_cpu_has(X86_FEATURE_ASI) ||
+	    !static_cpu_has(X86_FEATURE_PCID))
+		return;
+
+	asi_tlb_context = this_cpu_ptr(cpu_tlbstate.ctxs[asid].asi_context);
+
+	if (asi)
+		asi_tlb_context[asi->pcid_index].flush_pending = true;
+	else
+		for (i = 1; i < ASI_MAX_NUM; i++)
+			asi_tlb_context[i].flush_pending = true;
+}
+
+static void flush_asi_pcid(struct asi *asi)
+{
+	u16 asid = this_cpu_read(cpu_tlbstate.loaded_mm_asid);
+	/*
+	 * The flag should be cleared before the INVPCID, to avoid clearing it
+	 * in case an interrupt/exception sets it again after the INVPCID.
+	 */
+	asi_clear_pending_tlb_flush(asi);
+	invpcid_flush_single_context(asi_pcid(asi, asid));
+}
+
+static void __flush_tlb_one_asi(struct asi *asi, u16 asid, size_t addr)
+{
+	if (!static_cpu_has(X86_FEATURE_ASI))
+		return;
+
+	if (!static_cpu_has(X86_FEATURE_INVPCID_SINGLE)) {
+		invalidate_asi_pcid(asi, asid);
+	} else if (asi) {
+		invpcid_flush_one(asi_pcid(asi, asid), addr);
+	} else {
+		uint i;
+		struct mm_struct *mm = this_cpu_read(cpu_tlbstate.loaded_mm);
+
+		for (i = 1; i < ASI_MAX_NUM; i++)
+			if (mm->asi[i].pgd)
+				invpcid_flush_one(asi_pcid(&mm->asi[i], asid),
+						  addr);
+	}
+}
+
 #else /* CONFIG_ADDRESS_SPACE_ISOLATION */
 
 u16 asi_pcid(struct asi *asi, u16 asid)
 {
 	return kern_pcid(asid);
 }
+
+static inline void invalidate_kern_pcid(void) { }
+static inline void invalidate_asi_pcid(struct asi *asi, u16 asid) { }
+static inline void flush_asi_pcid(struct asi *asi) { }
+static inline void __flush_tlb_one_asi(struct asi *asi, u16 asid, size_t addr) { }
 
 #endif /* CONFIG_ADDRESS_SPACE_ISOLATION */
 
@@ -223,7 +282,8 @@ static void clear_asid_other(void)
 	 * This is only expected to be set if we have disabled
 	 * kernel _PAGE_GLOBAL pages.
 	 */
-	if (!static_cpu_has(X86_FEATURE_PTI)) {
+	if (!static_cpu_has(X86_FEATURE_PTI) &&
+	    !cpu_feature_enabled(X86_FEATURE_ASI)) {
 		WARN_ON_ONCE(1);
 		return;
 	}
@@ -313,6 +373,7 @@ static void load_new_mm_cr3(pgd_t *pgdir, u16 new_asid, bool need_flush)
 
 	if (need_flush) {
 		invalidate_user_asid(new_asid);
+		invalidate_asi_pcid(NULL, new_asid);
 		new_mm_cr3 = build_cr3(pgdir, new_asid);
 	} else {
 		new_mm_cr3 = build_cr3_noflush(pgdir, new_asid);
@@ -741,9 +802,15 @@ void initialize_tlbstate_and_flush(void)
 	this_cpu_write(cpu_tlbstate.next_asid, 1);
 	this_cpu_write(cpu_tlbstate.ctxs[0].ctx_id, mm->context.ctx_id);
 	this_cpu_write(cpu_tlbstate.ctxs[0].tlb_gen, tlb_gen);
+	invalidate_asi_pcid(NULL, 0);
 
 	for (i = 1; i < TLB_NR_DYN_ASIDS; i++)
 		this_cpu_write(cpu_tlbstate.ctxs[i].ctx_id, 0);
+}
+
+static inline void invlpg(unsigned long addr)
+{
+	asm volatile("invlpg (%0)" ::"r"(addr) : "memory");
 }
 
 /*
@@ -967,7 +1034,8 @@ void flush_tlb_multi(const struct cpumask *cpumask,
  * least 95%) of allocations, and is small enough that we are
  * confident it will not cause too much overhead.  Each single
  * flush is about 100 ns, so this caps the maximum overhead at
- * _about_ 3,000 ns.
+ * _about_ 3,000 ns (plus upto an additional ~3000 ns for each
+ * ASI instance, or for KPTI).
  *
  * This is in units of pages.
  */
@@ -1157,7 +1225,8 @@ void flush_tlb_one_kernel(unsigned long addr)
 	 */
 	flush_tlb_one_user(addr);
 
-	if (!static_cpu_has(X86_FEATURE_PTI))
+	if (!static_cpu_has(X86_FEATURE_PTI) &&
+	    !cpu_feature_enabled(X86_FEATURE_ASI))
 		return;
 
 	/*
@@ -1174,9 +1243,45 @@ void flush_tlb_one_kernel(unsigned long addr)
  */
 STATIC_NOPV void native_flush_tlb_one_user(unsigned long addr)
 {
-	u32 loaded_mm_asid = this_cpu_read(cpu_tlbstate.loaded_mm_asid);
+	u16 loaded_mm_asid;
 
-	asm volatile("invlpg (%0)" ::"r" (addr) : "memory");
+	if (!static_cpu_has(X86_FEATURE_PCID)) {
+		invlpg(addr);
+		return;
+	}
+
+	loaded_mm_asid = this_cpu_read(cpu_tlbstate.loaded_mm_asid);
+
+	/*
+	 * If we don't have INVPCID support, then we do an ASI Exit so that
+	 * the invlpg happens in the unrestricted address space, and we
+	 * invalidate the ASI PCID so that it is flushed at the next ASI Enter.
+	 *
+	 * But if a valid target ASI is set, then an ASI Exit can be ephemeral
+	 * due to interrupts/exceptions/NMIs (except if we are already inside
+	 * one), so we just invalidate both the ASI and the unrestricted kernel
+	 * PCIDs and let the invlpg flush whichever happens to be the current
+	 * address space. This is a bit more wasteful, but this scenario is not
+	 * actually expected to occur with the current usage of ASI, and is
+	 * handled here just for completeness. (If we wanted to optimize this,
+	 * we could manipulate the intr_nest_depth to guarantee that an ASI
+	 * Exit is not ephemeral).
+	 */
+	if (!static_cpu_has(X86_FEATURE_INVPCID_SINGLE)) {
+		if (unlikely(!asi_is_target_unrestricted()) &&
+		    asi_intr_nest_depth() == 0)
+			invalidate_kern_pcid();
+		else
+			asi_exit();
+	}
+
+	/* Flush the unrestricted kernel address space */
+	if (!is_asi_active())
+		invlpg(addr);
+	else
+		invpcid_flush_one(kern_pcid(loaded_mm_asid), addr);
+
+	__flush_tlb_one_asi(NULL, loaded_mm_asid, addr);
 
 	if (!static_cpu_has(X86_FEATURE_PTI))
 		return;
@@ -1235,6 +1340,9 @@ STATIC_NOPV void native_flush_tlb_global(void)
  */
 STATIC_NOPV void native_flush_tlb_local(void)
 {
+	struct asi *asi;
+	u16 asid = this_cpu_read(cpu_tlbstate.loaded_mm_asid);
+
 	/*
 	 * Preemption or interrupts must be disabled to protect the access
 	 * to the per CPU variable and to prevent being preempted between
@@ -1242,10 +1350,36 @@ STATIC_NOPV void native_flush_tlb_local(void)
 	 */
 	WARN_ON_ONCE(preemptible());
 
-	invalidate_user_asid(this_cpu_read(cpu_tlbstate.loaded_mm_asid));
+	/*
+	 * If we don't have INVPCID support, then we have to use
+	 * write_cr3(read_cr3()). However, that is not safe when ASI is active,
+	 * as an interrupt/exception/NMI could cause an ASI Exit in the middle
+	 * and change CR3. So we trigger an ASI Exit beforehand. But if a valid
+	 * target ASI is set, then an ASI Exit can also be ephemeral due to
+	 * interrupts (except if we are already inside one), and thus we have to
+	 * fallback to a global TLB flush.
+	 */
+	if (!static_cpu_has(X86_FEATURE_INVPCID_SINGLE)) {
+		if (unlikely(!asi_is_target_unrestricted()) &&
+		    asi_intr_nest_depth() == 0) {
+			native_flush_tlb_global();
+			return;
+		}
+		asi_exit();
+	}
 
-	/* If current->mm == NULL then the read_cr3() "borrows" an mm */
-	native_write_cr3(__native_read_cr3());
+	invalidate_user_asid(asid);
+	invalidate_asi_pcid(NULL, asid);
+
+	asi = asi_get_current();
+
+	if (!asi) {
+		/* If current->mm == NULL then the read_cr3() "borrows" an mm */
+		native_write_cr3(__native_read_cr3());
+	} else {
+		invpcid_flush_single_context(kern_pcid(asid));
+		flush_asi_pcid(asi);
+	}
 }
 
 void flush_tlb_local(void)

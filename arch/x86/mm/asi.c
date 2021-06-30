@@ -388,6 +388,7 @@ void __asi_enter(void)
 {
 	u64 asi_cr3;
 	u16 pcid;
+	bool need_flush = false;
 	struct asi *target = this_cpu_read(asi_cpu_state.target_asi);
 
 	VM_BUG_ON(preemptible());
@@ -401,8 +402,18 @@ void __asi_enter(void)
 
 	this_cpu_write(asi_cpu_state.curr_asi, target);
 
+	if (static_cpu_has(X86_FEATURE_PCID))
+		need_flush = asi_get_and_clear_tlb_flush_pending(target);
+
+	/*
+	 * It is possible that we may get a TLB flush IPI after
+	 * already reading need_flush, in which case we won't do the
+	 * flush below. However, in that case the interrupt epilog
+	 * will also call __asi_enter(), which will do the flush.
+	 */
+
 	pcid = asi_pcid(target, this_cpu_read(cpu_tlbstate.loaded_mm_asid));
-	asi_cr3 = build_cr3_pcid(target->pgd, pcid, false);
+	asi_cr3 = build_cr3_pcid(target->pgd, pcid, !need_flush);
 	write_cr3(asi_cr3);
 
 	if (target->class->ops.post_asi_enter)
@@ -437,12 +448,31 @@ void asi_exit(void)
 	asi = this_cpu_read(asi_cpu_state.curr_asi);
 
 	if (asi) {
+		bool need_flush = false;
+
 		if (asi->class->ops.pre_asi_exit)
 			asi->class->ops.pre_asi_exit();
 
-		unrestricted_cr3 =
-			build_cr3(this_cpu_read(cpu_tlbstate.loaded_mm)->pgd,
-				  this_cpu_read(cpu_tlbstate.loaded_mm_asid));
+		if (static_cpu_has(X86_FEATURE_PCID) &&
+		    !static_cpu_has(X86_FEATURE_INVPCID_SINGLE)) {
+			need_flush = this_cpu_read(
+					cpu_tlbstate.kern_pcid_needs_flush);
+			this_cpu_write(cpu_tlbstate.kern_pcid_needs_flush,
+				       false);
+		}
+
+		/*
+		 * It is possible that we may get a TLB flush IPI after
+		 * already reading need_flush. However, in that case the IPI
+		 * will not set flush_pending for the unrestricted address
+		 * space, as that is done by flush_tlb_one_user() only if
+		 * asi_intr_nest_depth() is 0.
+		 */
+
+		unrestricted_cr3 = build_cr3_pcid(
+			this_cpu_read(cpu_tlbstate.loaded_mm)->pgd,
+			kern_pcid(this_cpu_read(cpu_tlbstate.loaded_mm_asid)),
+			!need_flush);
 
 		write_cr3(unrestricted_cr3);
 		this_cpu_write(asi_cpu_state.curr_asi, NULL);

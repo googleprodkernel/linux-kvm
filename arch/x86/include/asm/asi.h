@@ -126,9 +126,16 @@ static inline void asi_intr_exit(void)
 	if (static_cpu_has(X86_FEATURE_ASI)) {
 		barrier();
 
-		if (--current->thread.intr_nest_depth == 0)
+		if (--current->thread.intr_nest_depth == 0) {
+			barrier();
 			__asi_enter();
+		}
 	}
+}
+
+static inline int asi_intr_nest_depth(void)
+{
+	return current->thread.intr_nest_depth;
 }
 
 #define INIT_MM_ASI(init_mm)						\
@@ -149,6 +156,8 @@ static inline pgd_t *asi_pgd(struct asi *asi)
 static inline void asi_intr_enter(void) { }
 
 static inline void asi_intr_exit(void) { }
+
+static inline int asi_intr_nest_depth(void) { return 0; }
 
 static inline void asi_init_thread_state(struct thread_struct *thread) { }
 
