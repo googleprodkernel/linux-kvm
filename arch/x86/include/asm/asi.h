@@ -41,6 +41,8 @@ struct asi {
 	struct asi_class *class;
 	struct mm_struct *mm;
 	u16 pcid_index;
+	atomic64_t *tlb_gen;
+	atomic64_t __tlb_gen;
 	int64_t asi_ref_count;
 };
 
@@ -138,11 +140,16 @@ static inline int asi_intr_nest_depth(void)
 	return current->thread.intr_nest_depth;
 }
 
+void asi_get_latest_tlb_gens(struct asi *asi, u64 *latest_local_tlb_gen,
+			     u64 *latest_global_tlb_gen);
+
 #define INIT_MM_ASI(init_mm)						\
 	.asi = {							\
 		[0] = {							\
 			.pgd = asi_global_nonsensitive_pgd,		\
-			.mm = &init_mm					\
+			.mm = &init_mm,					\
+			.__tlb_gen = ATOMIC64_INIT(1),			\
+			.tlb_gen = &init_mm.asi[0].__tlb_gen		\
 		}							\
 	},
 

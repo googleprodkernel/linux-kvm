@@ -355,6 +355,11 @@ int asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi)
 		for (i = pgd_index(VMALLOC_GLOBAL_NONSENSITIVE_START);
 		     i < PTRS_PER_PGD; i++)
 			set_pgd(asi->pgd + i, asi_global_nonsensitive_pgd[i]);
+
+		asi->tlb_gen = &mm->asi[0].__tlb_gen;
+	} else {
+		asi->tlb_gen = &asi->__tlb_gen;
+		atomic64_set(asi->tlb_gen, 1);
 	}
 
 exit_unlock:
@@ -384,11 +389,26 @@ void asi_destroy(struct asi *asi)
 }
 EXPORT_SYMBOL_GPL(asi_destroy);
 
+void asi_get_latest_tlb_gens(struct asi *asi, u64 *latest_local_tlb_gen,
+			     u64 *latest_global_tlb_gen)
+{
+	if (likely(asi->class->flags & ASI_MAP_STANDARD_NONSENSITIVE))
+		*latest_global_tlb_gen =
+			atomic64_read(ASI_GLOBAL_NONSENSITIVE->tlb_gen);
+	else
+		*latest_global_tlb_gen = 0;
+
+	*latest_local_tlb_gen = atomic64_read(asi->tlb_gen);
+}
+
 void __asi_enter(void)
 {
 	u64 asi_cr3;
 	u16 pcid;
 	bool need_flush = false;
+	u64 latest_local_tlb_gen, latest_global_tlb_gen;
+	struct tlb_state *tlb_state;
+	struct asi_tlb_context *tlb_context;
 	struct asi *target = this_cpu_read(asi_cpu_state.target_asi);
 
 	VM_BUG_ON(preemptible());
@@ -397,17 +417,35 @@ void __asi_enter(void)
 	if (!target || target == this_cpu_read(asi_cpu_state.curr_asi))
 		return;
 
-	VM_BUG_ON(this_cpu_read(cpu_tlbstate.loaded_mm) ==
-		  LOADED_MM_SWITCHING);
+	tlb_state = this_cpu_ptr(&cpu_tlbstate);
+	VM_BUG_ON(tlb_state->loaded_mm == LOADED_MM_SWITCHING);
 
 	this_cpu_write(asi_cpu_state.curr_asi, target);
 
-	if (static_cpu_has(X86_FEATURE_PCID))
-		need_flush = asi_get_and_clear_tlb_flush_pending(target);
+	if (static_cpu_has(X86_FEATURE_PCID)) {
+		/*
+		 * curr_asi write has to happen before the asi->tlb_gen reads
+		 * below.
+		 *
+		 * See comments in asi_flush_tlb_range().
+		 */
+		smp_mb();
+
+		asi_get_latest_tlb_gens(target, &latest_local_tlb_gen,
+					&latest_global_tlb_gen);
+
+		tlb_context = &tlb_state->ctxs[tlb_state->loaded_mm_asid]
+					.asi_context[target->pcid_index];
+
+		if (READ_ONCE(tlb_context->local_tlb_gen) < latest_local_tlb_gen
+		    || READ_ONCE(tlb_context->global_tlb_gen) <
+		       latest_global_tlb_gen)
+			need_flush = true;
+	}
 
 	/*
 	 * It is possible that we may get a TLB flush IPI after
-	 * already reading need_flush, in which case we won't do the
+	 * already calculating need_flush, in which case we won't do the
 	 * flush below. However, in that case the interrupt epilog
 	 * will also call __asi_enter(), which will do the flush.
 	 */
@@ -415,6 +453,23 @@ void __asi_enter(void)
 	pcid = asi_pcid(target, this_cpu_read(cpu_tlbstate.loaded_mm_asid));
 	asi_cr3 = build_cr3_pcid(target->pgd, pcid, !need_flush);
 	write_cr3(asi_cr3);
+
+	if (static_cpu_has(X86_FEATURE_PCID)) {
+		/*
+		 * There is a small possibility that an interrupt happened
+		 * after the read of the latest_*_tlb_gen above and when
+		 * that interrupt did an asi_enter() upon return, it read
+		 * an even higher latest_*_tlb_gen and already updated the
+		 * tlb_context->*tlb_gen accordingly. In that case, the
+		 * following will move back the tlb_context->*tlb_gen. That
+		 * isn't ideal, but it should not cause any correctness issues.
+		 * We may just end up doing an unnecessary TLB flush on the next
+		 * asi_enter(). If we really needed to avoid that, we could
+		 * just do a cmpxchg, but it is likely not necessary.
+		 */
+		WRITE_ONCE(tlb_context->local_tlb_gen, latest_local_tlb_gen);
+		WRITE_ONCE(tlb_context->global_tlb_gen, latest_global_tlb_gen);
+	}
 
 	if (target->class->ops.post_asi_enter)
 		target->class->ops.post_asi_enter();
@@ -504,6 +559,8 @@ int asi_init_mm_state(struct mm_struct *mm)
 	if (!mm->asi_enabled)
 		return 0;
 
+	mm->asi[0].tlb_gen = &mm->asi[0].__tlb_gen;
+	atomic64_set(mm->asi[0].tlb_gen, 1);
 	mm->asi[0].mm = mm;
 	mm->asi[0].pgd = (pgd_t *)__get_free_page(GFP_PGTABLE_USER);
 	if (!mm->asi[0].pgd)
@@ -716,12 +773,6 @@ void asi_unmap(struct asi *asi, void *addr, size_t len, bool flush_tlb)
 
 	if (flush_tlb)
 		asi_flush_tlb_range(asi, addr, len);
-}
-
-void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len)
-{
-	/* Later patches will do a more optimized flush. */
-	flush_tlb_kernel_range((ulong)addr, (ulong)addr + len);
 }
 
 void *asi_va(unsigned long pa)

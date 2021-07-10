@@ -31,6 +31,8 @@
 # define __flush_tlb_multi(msk, info)	native_flush_tlb_multi(msk, info)
 #endif
 
+STATIC_NOPV void native_flush_tlb_global(void);
+
 /*
  *	TLB flushing, formerly SMP-only
  *		c/o Linus Torvalds.
@@ -173,7 +175,6 @@ static void invalidate_kern_pcid(void)
 
 static void invalidate_asi_pcid(struct asi *asi, u16 asid)
 {
-	uint i;
 	struct asi_tlb_context *asi_tlb_context;
 
 	if (!static_cpu_has(X86_FEATURE_ASI) ||
@@ -183,21 +184,30 @@ static void invalidate_asi_pcid(struct asi *asi, u16 asid)
 	asi_tlb_context = this_cpu_ptr(cpu_tlbstate.ctxs[asid].asi_context);
 
 	if (asi)
-		asi_tlb_context[asi->pcid_index].flush_pending = true;
+		asi_tlb_context[asi->pcid_index] =
+					(struct asi_tlb_context) { 0 };
 	else
-		for (i = 1; i < ASI_MAX_NUM; i++)
-			asi_tlb_context[i].flush_pending = true;
+		memset(asi_tlb_context, 0,
+		       sizeof(struct asi_tlb_context) * ASI_MAX_NUM);
 }
 
 static void flush_asi_pcid(struct asi *asi)
 {
 	u16 asid = this_cpu_read(cpu_tlbstate.loaded_mm_asid);
-	/*
-	 * The flag should be cleared before the INVPCID, to avoid clearing it
-	 * in case an interrupt/exception sets it again after the INVPCID.
-	 */
-	asi_clear_pending_tlb_flush(asi);
+	struct asi_tlb_context *tlb_context = this_cpu_ptr(
+		&cpu_tlbstate.ctxs[asid].asi_context[asi->pcid_index]);
+	u64 latest_local_tlb_gen = atomic64_read(asi->tlb_gen);
+	u64 latest_global_tlb_gen = atomic64_read(
+					ASI_GLOBAL_NONSENSITIVE->tlb_gen);
+
 	invpcid_flush_single_context(asi_pcid(asi, asid));
+
+	/*
+	 * This could sometimes move the *_tlb_gen backwards. See comments
+	 * in __asi_enter().
+	 */
+	WRITE_ONCE(tlb_context->local_tlb_gen, latest_local_tlb_gen);
+	WRITE_ONCE(tlb_context->global_tlb_gen, latest_global_tlb_gen);
 }
 
 static void __flush_tlb_one_asi(struct asi *asi, u16 asid, size_t addr)
@@ -1050,7 +1060,7 @@ static DEFINE_PER_CPU(unsigned int, flush_tlb_info_idx);
 static struct flush_tlb_info *get_flush_tlb_info(struct mm_struct *mm,
 			unsigned long start, unsigned long end,
 			unsigned int stride_shift, bool freed_tables,
-			u64 new_tlb_gen)
+			u64 new_tlb_gen, u64 mm_ctx_id, u16 asi_pcid_index)
 {
 	struct flush_tlb_info *info = this_cpu_ptr(&flush_tlb_info);
 
@@ -1070,6 +1080,11 @@ static struct flush_tlb_info *get_flush_tlb_info(struct mm_struct *mm,
 	info->freed_tables	= freed_tables;
 	info->new_tlb_gen	= new_tlb_gen;
 	info->initiating_cpu	= smp_processor_id();
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	info->mm_context_id	= mm_ctx_id;
+	info->asi_pcid_index	= asi_pcid_index;
+#endif
 
 	return info;
 }
@@ -1104,7 +1119,7 @@ void flush_tlb_mm_range(struct mm_struct *mm, unsigned long start,
 	new_tlb_gen = inc_mm_tlb_gen(mm);
 
 	info = get_flush_tlb_info(mm, start, end, stride_shift, freed_tables,
-				  new_tlb_gen);
+				  new_tlb_gen, 0, 0);
 
 	/*
 	 * flush_tlb_multi() is not optimized for the common case in which only
@@ -1157,7 +1172,7 @@ void flush_tlb_kernel_range(unsigned long start, unsigned long end)
 		struct flush_tlb_info *info;
 
 		preempt_disable();
-		info = get_flush_tlb_info(NULL, start, end, 0, false, 0);
+		info = get_flush_tlb_info(NULL, start, end, 0, false, 0, 0, 0);
 
 		on_each_cpu(do_kernel_range_flush, info, 1);
 
@@ -1165,6 +1180,174 @@ void flush_tlb_kernel_range(unsigned long start, unsigned long end)
 		preempt_enable();
 	}
 }
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+static inline void invlpg_range(size_t start, size_t end, size_t stride)
+{
+	size_t addr;
+
+	for (addr = start; addr < end; addr += stride)
+		invlpg(addr);
+}
+
+static bool asi_needs_tlb_flush(struct asi *asi, struct flush_tlb_info *info)
+{
+	if (!asi ||
+	    (info->mm_context_id != U64_MAX &&
+	     info->mm_context_id != asi->mm->context.ctx_id) ||
+	    (info->asi_pcid_index && info->asi_pcid_index != asi->pcid_index))
+		return false;
+
+	if (unlikely(!(asi->class->flags & ASI_MAP_STANDARD_NONSENSITIVE)) &&
+	    (info->mm_context_id == U64_MAX || !info->asi_pcid_index))
+		return false;
+
+	return true;
+}
+
+static void __flush_asi_tlb_all(struct asi *asi)
+{
+	if (static_cpu_has(X86_FEATURE_INVPCID_SINGLE)) {
+		flush_asi_pcid(asi);
+		return;
+	}
+
+	/* See comments in native_flush_tlb_local() */
+	if (unlikely(!asi_is_target_unrestricted()) &&
+	    asi_intr_nest_depth() == 0) {
+		native_flush_tlb_global();
+		return;
+	}
+
+	/* Let the next ASI Enter do the flush */
+	asi_exit();
+}
+
+static void do_asi_tlb_flush(void *data)
+{
+	struct flush_tlb_info *info = data;
+	struct tlb_state *tlb_state = this_cpu_ptr(&cpu_tlbstate);
+	struct asi_tlb_context *tlb_context;
+	struct asi *asi = asi_get_current();
+	u64 latest_local_tlb_gen, latest_global_tlb_gen;
+	u64 curr_local_tlb_gen, curr_global_tlb_gen;
+	u64 new_local_tlb_gen, new_global_tlb_gen;
+	bool do_flush_all;
+
+	count_vm_tlb_event(NR_TLB_REMOTE_FLUSH_RECEIVED);
+
+	if (!asi_needs_tlb_flush(asi, info))
+		return;
+
+	do_flush_all = info->end - info->start >
+		       (tlb_single_page_flush_ceiling << PAGE_SHIFT);
+
+	if (!static_cpu_has(X86_FEATURE_PCID)) {
+		if (do_flush_all)
+			__flush_asi_tlb_all(asi);
+		else
+			invlpg_range(info->start, info->end, PAGE_SIZE);
+		return;
+	}
+
+	tlb_context = &tlb_state->ctxs[tlb_state->loaded_mm_asid]
+				.asi_context[asi->pcid_index];
+
+	asi_get_latest_tlb_gens(asi, &latest_local_tlb_gen,
+				&latest_global_tlb_gen);
+
+	curr_local_tlb_gen = READ_ONCE(tlb_context->local_tlb_gen);
+	curr_global_tlb_gen = READ_ONCE(tlb_context->global_tlb_gen);
+
+	if (info->mm_context_id == U64_MAX) {
+		new_global_tlb_gen = info->new_tlb_gen;
+		new_local_tlb_gen = curr_local_tlb_gen;
+	} else {
+		new_local_tlb_gen = info->new_tlb_gen;
+		new_global_tlb_gen = curr_global_tlb_gen;
+	}
+
+	/* Somebody already did a full flush */
+	if (new_local_tlb_gen <= curr_local_tlb_gen &&
+	    new_global_tlb_gen <= curr_global_tlb_gen)
+		return;
+
+	/*
+	 * If we can't bring the TLB up-to-date with a range flush, then do a
+	 * full flush anyway.
+	 */
+	if (do_flush_all || !(new_local_tlb_gen == latest_local_tlb_gen &&
+			      new_global_tlb_gen == latest_global_tlb_gen &&
+			      new_local_tlb_gen <= curr_local_tlb_gen + 1 &&
+			      new_global_tlb_gen <= curr_global_tlb_gen + 1)) {
+		__flush_asi_tlb_all(asi);
+		return;
+	}
+
+	invlpg_range(info->start, info->end, PAGE_SIZE);
+
+	/*
+	 * If we are still in ASI context, then all the INVLPGs flushed the
+	 * ASI PCID and so we can update the tlb_gens.
+	 */
+	if (asi_get_current() == asi) {
+		WRITE_ONCE(tlb_context->local_tlb_gen, new_local_tlb_gen);
+		WRITE_ONCE(tlb_context->global_tlb_gen, new_global_tlb_gen);
+	}
+}
+
+static bool is_asi_active_on_cpu(int cpu, void *info)
+{
+	return per_cpu(asi_cpu_state.curr_asi, cpu);
+}
+
+void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len)
+{
+	size_t start = (size_t)addr;
+	size_t end = start + len;
+	struct flush_tlb_info *info;
+	u64 mm_context_id;
+	const cpumask_t *cpu_mask;
+	u64 new_tlb_gen = 0;
+
+	if (!static_cpu_has(X86_FEATURE_ASI))
+		return;
+
+	if (static_cpu_has(X86_FEATURE_PCID)) {
+		new_tlb_gen = atomic64_inc_return(asi->tlb_gen);
+
+		/*
+		 * The increment of tlb_gen must happen before the curr_asi
+		 * reads in is_asi_active_on_cpu(). That ensures that if another
+		 * CPU is in asi_enter() and happens to write to curr_asi after
+		 * is_asi_active_on_cpu() read it, it will see the updated
+		 * tlb_gen and perform a flush during the TLB switch.
+		 */
+		smp_mb__after_atomic();
+	}
+
+	preempt_disable();
+
+	if (asi == ASI_GLOBAL_NONSENSITIVE) {
+		mm_context_id = U64_MAX;
+		cpu_mask = cpu_online_mask;
+	} else {
+		mm_context_id = asi->mm->context.ctx_id;
+		cpu_mask = mm_cpumask(asi->mm);
+	}
+
+	info = get_flush_tlb_info(NULL, start, end, 0, false, new_tlb_gen,
+				  mm_context_id, asi->pcid_index);
+
+	on_each_cpu_cond_mask(is_asi_active_on_cpu, do_asi_tlb_flush, info,
+			      true, cpu_mask);
+
+	put_flush_tlb_info();
+	preempt_enable();
+}
+
+#endif
 
 /*
  * This can be used from process context to figure out what the value of
@@ -1415,7 +1598,7 @@ void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch)
 
 	int cpu = get_cpu();
 
-	info = get_flush_tlb_info(NULL, 0, TLB_FLUSH_ALL, 0, false, 0);
+	info = get_flush_tlb_info(NULL, 0, TLB_FLUSH_ALL, 0, false, 0, 0, 0);
 	/*
 	 * flush_tlb_multi() is not optimized for the common case in which only
 	 * a local TLB flush is needed. Optimize this use-case by calling

@@ -63,7 +63,8 @@ static inline void cr4_clear_bits(unsigned long mask)
 #ifdef CONFIG_ADDRESS_SPACE_ISOLATION
 
 struct asi_tlb_context {
-	bool flush_pending;
+	u64 local_tlb_gen;
+	u64 global_tlb_gen;
 };
 
 #endif
@@ -223,6 +224,20 @@ struct flush_tlb_info {
 	unsigned int		initiating_cpu;
 	u8			stride_shift;
 	u8			freed_tables;
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	/*
+	 * We can't use the mm pointer above, as there can be some cases where
+	 * the mm is already freed. Of course, a flush wouldn't be necessary
+	 * in that case, and we would know that when we compare the context ID.
+	 *
+	 * If U64_MAX, then a global flush would be done.
+	 */
+	u64			mm_context_id;
+
+	/* If non-zero, flush only the ASI instance with this PCID index. */
+	u16			asi_pcid_index;
+#endif
 };
 
 void flush_tlb_local(void);
@@ -280,36 +295,6 @@ unsigned long build_cr3_pcid(pgd_t *pgd, u16 pcid, bool noflush);
 
 u16 kern_pcid(u16 asid);
 u16 asi_pcid(struct asi *asi, u16 asid);
-
-#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
-
-static inline bool *__asi_tlb_flush_pending(struct asi *asi)
-{
-	struct tlb_state *tlb_state;
-	struct tlb_context *tlb_context;
-
-	tlb_state = this_cpu_ptr(&cpu_tlbstate);
-	tlb_context = &tlb_state->ctxs[tlb_state->loaded_mm_asid];
-	return &tlb_context->asi_context[asi->pcid_index].flush_pending;
-}
-
-static inline bool asi_get_and_clear_tlb_flush_pending(struct asi *asi)
-{
-	bool *tlb_flush_pending_ptr = __asi_tlb_flush_pending(asi);
-	bool tlb_flush_pending = READ_ONCE(*tlb_flush_pending_ptr);
-
-	if (tlb_flush_pending)
-		WRITE_ONCE(*tlb_flush_pending_ptr, false);
-
-	return tlb_flush_pending;
-}
-
-static inline void asi_clear_pending_tlb_flush(struct asi *asi)
-{
-	WRITE_ONCE(*__asi_tlb_flush_pending(asi), false);
-}
-
-#endif /* CONFIG_ADDRESS_SPACE_ISOLATION */
 
 #endif /* !MODULE */
 
