@@ -5182,20 +5182,41 @@ static void async_free_work_fn(struct work_struct *work)
 {
 	struct page *page, *tmp;
 	struct llist_node *pages_to_free;
-	void *va;
-	size_t len;
+	size_t addr;
 	uint order;
 
 	pages_to_free = llist_del_all(this_cpu_ptr(&pages_to_free_async));
 
-	/* A later patch will do a more optimized TLB flush. */
+	if (!pages_to_free)
+		return;
+
+	/* If we only have one page to free, then do a targeted TLB flush. */
+	if (!llist_next(pages_to_free)) {
+		page = llist_entry(pages_to_free, struct page, async_free_node);
+		addr = (size_t)page_to_virt(page);
+		order = page->private;
+
+		__asi_flush_tlb_range(page->asi_mm_ctx_id, 0, page->asi_tlb_gen,
+				      addr, addr + PAGE_SIZE * (1 << order),
+				      cpu_online_mask);
+		/* Need to clear, since it shares space with page->mapping. */
+		page->asi_tlb_gen = 0;
+
+		__free_the_page(page, order);
+		return;
+	}
+
+	/*
+	 * Otherwise, do a full flush. We could potentially try to optimize it
+	 * via taking a union of what needs to be flushed, but it may not be
+	 * worth the additional complexity.
+	 */
+	asi_flush_tlb_range(ASI_GLOBAL_NONSENSITIVE, 0, TLB_FLUSH_ALL);
 
 	llist_for_each_entry_safe(page, tmp, pages_to_free, async_free_node) {
-		va = page_to_virt(page);
 		order = page->private;
-		len = PAGE_SIZE * (1 << order);
-
-		asi_flush_tlb_range(ASI_GLOBAL_NONSENSITIVE, va, len);
+		/* Need to clear, since it shares space with page->mapping. */
+		page->asi_tlb_gen = 0;
 		__free_the_page(page, order);
 	}
 }
@@ -5290,6 +5311,11 @@ static bool asi_unmap_freed_pages(struct page *page, unsigned int order)
 
 	if (!async_flush_needed)
 		return true;
+
+	page->asi_mm_ctx_id = PageGlobalNonSensitive(page)
+			      ? U64_MAX : asi->mm->context.ctx_id;
+
+	__asi_prepare_tlb_flush(asi, &page->asi_tlb_gen);
 
 	page->private = order;
 	llist_add(&page->async_free_node, this_cpu_ptr(&pages_to_free_async));

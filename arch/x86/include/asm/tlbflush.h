@@ -296,6 +296,14 @@ unsigned long build_cr3_pcid(pgd_t *pgd, u16 pcid, bool noflush);
 u16 kern_pcid(u16 asid);
 u16 asi_pcid(struct asi *asi, u16 asid);
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+void __asi_prepare_tlb_flush(struct asi *asi, u64 *new_tlb_gen);
+void __asi_flush_tlb_range(u64 mm_context_id, u16 pcid_index, u64 new_tlb_gen,
+			   size_t start, size_t end, const cpumask_t *cpu_mask);
+
+#endif /* CONFIG_ADDRESS_SPACE_ISOLATION */
+
 #endif /* !MODULE */
 
 #endif /* _ASM_X86_TLBFLUSH_H */

@@ -193,21 +193,33 @@ struct page {
 		/** @rcu_head: You can use this to free a page by RCU. */
 		struct rcu_head rcu_head;
 
-#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+#if defined(CONFIG_ADDRESS_SPACE_ISOLATION) && !defined(BUILD_VDSO32)
 		struct {
 			/* Links the pages_to_free_async list */
 			struct llist_node async_free_node;
 
 			unsigned long _asi_pad_1;
-			unsigned long _asi_pad_2;
+			u64 asi_tlb_gen;
 
-			/*
-			 * Upon allocation of a locally non-sensitive page, set
-			 * to the allocating mm. Must be set to the same mm when
-			 * the page is freed. May potentially be overwritten in
-			 * the meantime, as long as it is restored before free.
-			 */
-			struct mm_struct *asi_mm;
+			union {
+				/*
+				 * Upon allocation of a locally non-sensitive
+				 * page, set to the allocating mm. Must be set
+				 * to the same mm when the page is freed. May
+				 * potentially be overwritten in the meantime,
+				 * as long as it is restored before free.
+				 */
+				struct mm_struct *asi_mm;
+
+				/*
+				 * Set to the above mm's context ID if the page
+				 * is being freed asynchronously. Can't directly
+				 * use the mm_struct, unless we take additional
+				 * steps to avoid it from being freed while the
+				 * async work is pending.
+				 */
+				u64 asi_mm_ctx_id;
+			};
 		};
 #endif
 	};

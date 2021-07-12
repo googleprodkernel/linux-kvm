@@ -1302,21 +1302,10 @@ static bool is_asi_active_on_cpu(int cpu, void *info)
 	return per_cpu(asi_cpu_state.curr_asi, cpu);
 }
 
-void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len)
+void __asi_prepare_tlb_flush(struct asi *asi, u64 *new_tlb_gen)
 {
-	size_t start = (size_t)addr;
-	size_t end = start + len;
-	struct flush_tlb_info *info;
-	u64 mm_context_id;
-	const cpumask_t *cpu_mask;
-	u64 new_tlb_gen = 0;
-
-	if (!static_cpu_has(X86_FEATURE_ASI))
-		return;
-
 	if (static_cpu_has(X86_FEATURE_PCID)) {
-		new_tlb_gen = atomic64_inc_return(asi->tlb_gen);
-
+		*new_tlb_gen = atomic64_inc_return(asi->tlb_gen);
 		/*
 		 * The increment of tlb_gen must happen before the curr_asi
 		 * reads in is_asi_active_on_cpu(). That ensures that if another
@@ -1326,8 +1315,35 @@ void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len)
 		 */
 		smp_mb__after_atomic();
 	}
+}
+
+void __asi_flush_tlb_range(u64 mm_context_id, u16 pcid_index, u64 new_tlb_gen,
+			   size_t start, size_t end, const cpumask_t *cpu_mask)
+{
+	struct flush_tlb_info *info;
 
 	preempt_disable();
+	info = get_flush_tlb_info(NULL, start, end, 0, false, new_tlb_gen,
+				  mm_context_id, pcid_index);
+
+	on_each_cpu_cond_mask(is_asi_active_on_cpu, do_asi_tlb_flush, info,
+			      true, cpu_mask);
+	put_flush_tlb_info();
+	preempt_enable();
+}
+
+void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len)
+{
+	size_t start = (size_t)addr;
+	size_t end = start + len;
+	u64 mm_context_id;
+	u64 new_tlb_gen = 0;
+	const cpumask_t *cpu_mask;
+
+	if (!static_cpu_has(X86_FEATURE_ASI))
+		return;
+
+	__asi_prepare_tlb_flush(asi, &new_tlb_gen);
 
 	if (asi == ASI_GLOBAL_NONSENSITIVE) {
 		mm_context_id = U64_MAX;
@@ -1337,14 +1353,8 @@ void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len)
 		cpu_mask = mm_cpumask(asi->mm);
 	}
 
-	info = get_flush_tlb_info(NULL, start, end, 0, false, new_tlb_gen,
-				  mm_context_id, asi->pcid_index);
-
-	on_each_cpu_cond_mask(is_asi_active_on_cpu, do_asi_tlb_flush, info,
-			      true, cpu_mask);
-
-	put_flush_tlb_info();
-	preempt_enable();
+	__asi_flush_tlb_range(mm_context_id, asi->pcid_index, new_tlb_gen,
+			      start, end, cpu_mask);
 }
 
 #endif
