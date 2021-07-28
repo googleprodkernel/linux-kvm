@@ -198,7 +198,7 @@ struct page {
 			/* Links the pages_to_free_async list */
 			struct llist_node async_free_node;
 
-			unsigned long _asi_pad_1;
+			struct page *asi_pgtbl_pool_next;
 			u64 asi_tlb_gen;
 
 			union {

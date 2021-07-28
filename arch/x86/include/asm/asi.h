@@ -44,6 +44,12 @@ struct asi {
 	atomic64_t *tlb_gen;
 	atomic64_t __tlb_gen;
 	int64_t asi_ref_count;
+	rwlock_t user_map_lock;
+};
+
+struct asi_pgtbl_pool {
+	struct page *pgtbl_list;
+	uint count;
 };
 
 DECLARE_PER_CPU_ALIGNED(struct asi_state, asi_cpu_state);
@@ -73,6 +79,19 @@ void asi_sync_mapping(struct asi *asi, void *addr, size_t len);
 void asi_do_lazy_map(struct asi *asi, size_t addr);
 void asi_clear_user_pgd(struct mm_struct *mm, size_t addr);
 void asi_clear_user_p4d(struct mm_struct *mm, size_t addr);
+
+int  asi_map_user(struct asi *asi, void *addr, size_t len,
+		  struct asi_pgtbl_pool *pool,
+		  size_t allowed_start, size_t allowed_end);
+void asi_unmap_user(struct asi *asi, void *va, size_t len);
+int  asi_fill_pgtbl_pool(struct asi_pgtbl_pool *pool, uint count, gfp_t flags);
+void asi_clear_pgtbl_pool(struct asi_pgtbl_pool *pool);
+
+static inline void asi_init_pgtbl_pool(struct asi_pgtbl_pool *pool)
+{
+	pool->pgtbl_list = NULL;
+	pool->count = 0;
+}
 
 static inline void asi_init_thread_state(struct thread_struct *thread)
 {

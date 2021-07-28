@@ -86,6 +86,55 @@ void asi_unregister_class(int index)
 }
 EXPORT_SYMBOL_GPL(asi_unregister_class);
 
+static ulong get_pgtbl_from_pool(struct asi_pgtbl_pool *pool)
+{
+	struct page *pgtbl;
+
+	if (pool->count == 0)
+		return 0;
+
+	pgtbl = pool->pgtbl_list;
+	pool->pgtbl_list = pgtbl->asi_pgtbl_pool_next;
+	pgtbl->asi_pgtbl_pool_next = NULL;
+	pool->count--;
+
+	return (ulong)page_address(pgtbl);
+}
+
+static void return_pgtbl_to_pool(struct asi_pgtbl_pool *pool, ulong virt)
+{
+	struct page *pgtbl = virt_to_page(virt);
+
+	pgtbl->asi_pgtbl_pool_next = pool->pgtbl_list;
+	pool->pgtbl_list = pgtbl;
+	pool->count++;
+}
+
+int asi_fill_pgtbl_pool(struct asi_pgtbl_pool *pool, uint count, gfp_t flags)
+{
+	if (!static_cpu_has(X86_FEATURE_ASI))
+		return 0;
+
+	while (pool->count < count) {
+		ulong pgtbl = get_zeroed_page(flags);
+
+		if (!pgtbl)
+			return -ENOMEM;
+
+		return_pgtbl_to_pool(pool, pgtbl);
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(asi_fill_pgtbl_pool);
+
+void asi_clear_pgtbl_pool(struct asi_pgtbl_pool *pool)
+{
+	while (pool->count > 0)
+		free_page(get_pgtbl_from_pool(pool));
+}
+EXPORT_SYMBOL_GPL(asi_clear_pgtbl_pool);
+
 static void asi_clone_pgd(pgd_t *dst_table, pgd_t *src_table, size_t addr)
 {
 	pgd_t *src = pgd_offset_pgd(src_table, addr);
@@ -110,10 +159,12 @@ static void asi_clone_pgd(pgd_t *dst_table, pgd_t *src_table, size_t addr)
 #define DEFINE_ASI_PGTBL_ALLOC(base, level)				\
 static level##_t * asi_##level##_alloc(struct asi *asi,			\
 				       base##_t *base, ulong addr,	\
-				       gfp_t flags)			\
+				       gfp_t flags,			\
+				       struct asi_pgtbl_pool *pool)	\
 {									\
 	if (unlikely(base##_none(*base))) {				\
-		ulong pgtbl = get_zeroed_page(flags);			\
+		ulong pgtbl = pool ? get_pgtbl_from_pool(pool)		\
+				   : get_zeroed_page(flags);		\
 		phys_addr_t pgtbl_pa;					\
 									\
 		if (pgtbl == 0)						\
@@ -127,7 +178,10 @@ static level##_t * asi_##level##_alloc(struct asi *asi,			\
 			mm_inc_nr_##level##s(asi->mm);			\
 		} else {						\
 			paravirt_release_##level(PHYS_PFN(pgtbl_pa));	\
-			free_page(pgtbl);				\
+			if (pool)					\
+				return_pgtbl_to_pool(pool, pgtbl);	\
+			else						\
+				free_page(pgtbl);			\
 		}							\
 									\
 		/* NOP on native. PV call on Xen. */			\
@@ -336,6 +390,7 @@ int asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi)
 	asi->class = &asi_class[asi_index];
 	asi->mm = mm;
 	asi->pcid_index = asi_index;
+	rwlock_init(&asi->user_map_lock);
 
 	if (asi->class->flags & ASI_MAP_STANDARD_NONSENSITIVE) {
 		uint i;
@@ -650,11 +705,6 @@ static bool follow_physaddr(struct mm_struct *mm, size_t virt,
 /*
  * Map the given range into the ASI page tables. The source of the mapping
  * is the regular unrestricted page tables.
- * Can be used to map any kernel memory.
- *
- * The caller MUST ensure that the source mapping will not change during this
- * function. For dynamic kernel memory, this is generally ensured by mapping
- * the memory within the allocator.
  *
  * If the source mapping is a large page and the range being mapped spans the
  * entire large page, then it will be mapped as a large page in the ASI page
@@ -664,19 +714,17 @@ static bool follow_physaddr(struct mm_struct *mm, size_t virt,
  * destination page, but that should be ok for now, as usually in such cases,
  * the range would consist of a small-ish number of pages.
  */
-int asi_map_gfp(struct asi *asi, void *addr, size_t len, gfp_t gfp_flags)
+int __asi_map(struct asi *asi, size_t start, size_t end, gfp_t gfp_flags,
+	      struct asi_pgtbl_pool *pool,
+	      size_t allowed_start, size_t allowed_end)
 {
 	size_t virt;
-	size_t start = (size_t)addr;
-	size_t end = start + len;
 	size_t page_size;
 
-	if (!static_cpu_has(X86_FEATURE_ASI) || !asi)
-		return 0;
-
 	VM_BUG_ON(start & ~PAGE_MASK);
-	VM_BUG_ON(len & ~PAGE_MASK);
-	VM_BUG_ON(start < TASK_SIZE_MAX);
+	VM_BUG_ON(end & ~PAGE_MASK);
+	VM_BUG_ON(end > allowed_end);
+	VM_BUG_ON(start < allowed_start);
 
 	gfp_flags &= GFP_RECLAIM_MASK;
 
@@ -702,14 +750,15 @@ int asi_map_gfp(struct asi *asi, void *addr, size_t len, gfp_t gfp_flags)
 				continue;				       \
 			}						       \
 									       \
-			level = asi_##level##_alloc(asi, base, virt, gfp_flags);\
+			level = asi_##level##_alloc(asi, base, virt,	       \
+						    gfp_flags, pool);	       \
 			if (!level)					       \
 				return -ENOMEM;				       \
 									       \
 			if (page_size >= LEVEL##_SIZE &&		       \
 			    (level##_none(*level) || level##_leaf(*level)) &&  \
 			    is_page_within_range(virt, LEVEL##_SIZE,	       \
-						 start, end)) {		       \
+						 allowed_start, allowed_end)) {\
 				page_size = LEVEL##_SIZE;		       \
 				phys &= LEVEL##_MASK;			       \
 									       \
@@ -735,6 +784,26 @@ int asi_map_gfp(struct asi *asi, void *addr, size_t len, gfp_t gfp_flags)
 	}
 
 	return 0;
+}
+
+/*
+ * Maps the given kernel address range into the ASI page tables.
+ *
+ * The caller MUST ensure that the source mapping will not change during this
+ * function. For dynamic kernel memory, this is generally ensured by mapping
+ * the memory within the allocator.
+ */
+int asi_map_gfp(struct asi *asi, void *addr, size_t len, gfp_t gfp_flags)
+{
+	size_t start = (size_t)addr;
+	size_t end = start + len;
+
+	if (!static_cpu_has(X86_FEATURE_ASI) || !asi)
+		return 0;
+
+	VM_BUG_ON(start < TASK_SIZE_MAX);
+
+	return __asi_map(asi, start, end, gfp_flags, NULL, start, end);
 }
 
 int asi_map(struct asi *asi, void *addr, size_t len)
@@ -935,3 +1004,150 @@ void asi_clear_user_p4d(struct mm_struct *mm, size_t addr)
 	if (!pgtable_l5_enabled())
 		__asi_clear_user_pgd(mm, addr);
 }
+
+/*
+ * Maps the given userspace address range into the ASI page tables.
+ *
+ * The caller MUST ensure that the source mapping will not change during this
+ * function e.g. by synchronizing via MMU notifiers or acquiring the
+ * appropriate locks.
+ */
+int asi_map_user(struct asi *asi, void *addr, size_t len,
+		 struct asi_pgtbl_pool *pool,
+		 size_t allowed_start, size_t allowed_end)
+{
+	int err;
+	size_t start = (size_t)addr;
+	size_t end = start + len;
+
+	if (!static_cpu_has(X86_FEATURE_ASI) || !asi)
+		return 0;
+
+	VM_BUG_ON(end > TASK_SIZE_MAX);
+
+	read_lock(&asi->user_map_lock);
+	err = __asi_map(asi, start, end, GFP_NOWAIT, pool,
+			allowed_start, allowed_end);
+	read_unlock(&asi->user_map_lock);
+
+	return err;
+}
+EXPORT_SYMBOL_GPL(asi_map_user);
+
+static bool
+asi_unmap_free_pte_range(struct asi_pgtbl_pool *pgtbls_to_free,
+			 pte_t *pte, size_t addr, size_t end)
+{
+	do {
+		pte_clear(NULL, addr, pte);
+	} while (pte++, addr += PAGE_SIZE, addr != end);
+
+	return true;
+}
+
+#define DEFINE_ASI_UNMAP_FREE_RANGE(level, LEVEL, next_level, NEXT_LVL_SIZE)   \
+static bool								       \
+asi_unmap_free_##level##_range(struct asi_pgtbl_pool *pgtbls_to_free,	       \
+			       level##_t *level, size_t addr, size_t end)      \
+{									       \
+	bool unmapped = false;						       \
+	size_t next;							       \
+									       \
+	do {								       \
+		next = level##_addr_end(addr, end);			       \
+		if (level##_none(*level))				       \
+			continue;					       \
+									       \
+		if (IS_ALIGNED(addr, LEVEL##_SIZE) &&			       \
+		    IS_ALIGNED(next, LEVEL##_SIZE)) {			       \
+			if (!level##_large(*level)) {			       \
+				ulong pgtbl = level##_page_vaddr(*level);      \
+				struct page *page = virt_to_page(pgtbl);       \
+									       \
+				page->private = PG_LEVEL_##NEXT_LVL_SIZE;      \
+				return_pgtbl_to_pool(pgtbls_to_free, pgtbl);   \
+			}						       \
+			level##_clear(level);				       \
+			unmapped = true;				       \
+		} else {						       \
+			/*						       \
+			 * At this time, we don't have a case where we need to \
+			 * unmap a subset of a huge page. But that could arise \
+			 * in the future. In that case, we'll need to split    \
+			 * the huge mapping here.			       \
+			 */						       \
+			if (WARN_ON(level##_large(*level)))		       \
+				continue;				       \
+									       \
+			unmapped |= asi_unmap_free_##next_level##_range(       \
+					pgtbls_to_free,			       \
+					next_level##_offset(level, addr),      \
+					addr, next);			       \
+		}							       \
+	} while (level++, addr = next, addr != end);			       \
+									       \
+	return unmapped;						       \
+}
+
+DEFINE_ASI_UNMAP_FREE_RANGE(pmd, PMD, pte, 4K)
+DEFINE_ASI_UNMAP_FREE_RANGE(pud, PUD, pmd, 2M)
+DEFINE_ASI_UNMAP_FREE_RANGE(p4d, P4D, pud, 1G)
+DEFINE_ASI_UNMAP_FREE_RANGE(pgd, PGDIR, p4d, 512G)
+
+static bool asi_unmap_and_free_range(struct asi_pgtbl_pool *pgtbls_to_free,
+				     struct asi *asi, size_t addr, size_t end)
+{
+	size_t next;
+	bool unmapped = false;
+	pgd_t *pgd = pgd_offset_pgd(asi->pgd, addr);
+
+	BUILD_BUG_ON((void *)&((struct page *)NULL)->private ==
+		     (void *)&((struct page *)NULL)->asi_pgtbl_pool_next);
+
+	if (pgtable_l5_enabled())
+		return asi_unmap_free_pgd_range(pgtbls_to_free, pgd, addr, end);
+
+	do {
+		next = pgd_addr_end(addr, end);
+		unmapped |= asi_unmap_free_p4d_range(pgtbls_to_free,
+						     p4d_offset(pgd, addr),
+						     addr, next);
+	} while (pgd++, addr = next, addr != end);
+
+	return unmapped;
+}
+
+void asi_unmap_user(struct asi *asi, void *addr, size_t len)
+{
+	static void (*const free_pgtbl_at_level[])(struct asi *, size_t) = {
+		NULL,
+		asi_free_pte,
+		asi_free_pmd,
+		asi_free_pud,
+		asi_free_p4d
+	};
+
+	struct asi_pgtbl_pool pgtbls_to_free = { 0 };
+	size_t start = (size_t)addr;
+	size_t end = start + len;
+	bool unmapped;
+
+	if (!static_cpu_has(X86_FEATURE_ASI) || !asi)
+		return;
+
+	write_lock(&asi->user_map_lock);
+	unmapped = asi_unmap_and_free_range(&pgtbls_to_free, asi, start, end);
+	write_unlock(&asi->user_map_lock);
+
+	if (unmapped)
+		asi_flush_tlb_range(asi, addr, len);
+
+	while (pgtbls_to_free.count > 0) {
+		size_t pgtbl = get_pgtbl_from_pool(&pgtbls_to_free);
+		struct page *page = virt_to_page(pgtbl);
+
+		VM_BUG_ON(page->private >= PG_LEVEL_NUM);
+		free_pgtbl_at_level[page->private](asi, pgtbl);
+	}
+}
+EXPORT_SYMBOL_GPL(asi_unmap_user);

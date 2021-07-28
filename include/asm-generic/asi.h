@@ -26,6 +26,7 @@
 
 struct asi_hooks {};
 struct asi {};
+struct asi_pgtbl_pool {};
 
 static inline
 int asi_register_class(const char *name, uint flags,
@@ -91,6 +92,26 @@ void asi_clear_user_pgd(struct mm_struct *mm, size_t addr) { }
 
 static inline
 void asi_clear_user_p4d(struct mm_struct *mm, size_t addr) { }
+
+static inline
+int asi_map_user(struct asi *asi, void *addr, size_t len,
+		 struct asi_pgtbl_pool *pool,
+		 size_t allowed_start, size_t allowed_end)
+{
+	return 0;
+}
+
+static inline void asi_unmap_user(struct asi *asi, void *va, size_t len) { }
+
+static inline
+int asi_fill_pgtbl_pool(struct asi_pgtbl_pool *pool, uint count, gfp_t flags)
+{
+	return 0;
+}
+
+static inline void asi_clear_pgtbl_pool(struct asi_pgtbl_pool *pool) { }
+
+static inline void asi_init_pgtbl_pool(struct asi_pgtbl_pool *pool) { }
 
 static inline
 void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len) { }
