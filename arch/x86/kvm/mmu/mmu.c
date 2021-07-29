@@ -91,6 +91,11 @@ __MODULE_PARM_TYPE(nx_huge_pages_recovery_period_ms, "uint");
 static bool __read_mostly force_flush_and_sync_on_reuse;
 module_param_named(flush_on_reuse, force_flush_and_sync_on_reuse, bool, 0644);
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+bool __ro_after_init treat_all_userspace_as_nonsensitive;
+module_param(treat_all_userspace_as_nonsensitive, bool, 0444);
+#endif
+
 /*
  * When setting this variable to true it enables Two-Dimensional-Paging
  * where the hardware walks 2 page tables:
@@ -2757,6 +2762,21 @@ static int mmu_set_spte(struct kvm_vcpu *vcpu, struct kvm_memory_slot *slot,
 	return ret;
 }
 
+static void asi_map_gfn_range(struct kvm_vcpu *vcpu,
+			      struct kvm_memory_slot *slot,
+			      gfn_t gfn, size_t npages)
+{
+	int err;
+	size_t hva = __gfn_to_hva_memslot(slot, gfn);
+
+	err = asi_map_user(vcpu->kvm->asi, (void *)hva, PAGE_SIZE * npages,
+			   &vcpu->arch.asi_pgtbl_pool, slot->userspace_addr,
+			   slot->userspace_addr + slot->npages * PAGE_SIZE);
+	if (err)
+		kvm_err("asi_map_user for %lx-%lx failed with code %d", hva,
+			hva + PAGE_SIZE * npages, err);
+}
+
 static int direct_pte_prefetch_many(struct kvm_vcpu *vcpu,
 				    struct kvm_mmu_page *sp,
 				    u64 *start, u64 *end)
@@ -2775,6 +2795,9 @@ static int direct_pte_prefetch_many(struct kvm_vcpu *vcpu,
 	ret = gfn_to_page_many_atomic(slot, gfn, pages, end - start);
 	if (ret <= 0)
 		return -1;
+
+	if (!treat_all_userspace_as_nonsensitive)
+		asi_map_gfn_range(vcpu, slot, gfn, ret);
 
 	for (i = 0; i < ret; i++, gfn++, start++) {
 		mmu_set_spte(vcpu, slot, start, access, gfn,
@@ -3980,6 +4003,15 @@ out_retry:
 	return true;
 }
 
+static void vcpu_fill_asi_pgtbl_pool(struct kvm_vcpu *vcpu)
+{
+	int err = asi_fill_pgtbl_pool(&vcpu->arch.asi_pgtbl_pool,
+				      CONFIG_PGTABLE_LEVELS - 1, GFP_KERNEL);
+
+	if (err)
+		kvm_err("asi_fill_pgtbl_pool failed with code %d", err);
+}
+
 /*
  * Returns true if the page fault is stale and needs to be retried, i.e. if the
  * root was invalidated by a memslot update or a relevant mmu_notifier fired.
@@ -4013,6 +4045,7 @@ static int direct_page_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	bool is_tdp_mmu_fault = is_tdp_mmu(vcpu->arch.mmu);
 
 	unsigned long mmu_seq;
+	bool try_asi_map;
 	int r;
 
 	fault->gfn = fault->addr >> PAGE_SHIFT;
@@ -4038,6 +4071,12 @@ static int direct_page_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	if (handle_abnormal_pfn(vcpu, fault, ACC_ALL, &r))
 		return r;
 
+	try_asi_map = !treat_all_userspace_as_nonsensitive &&
+		      !is_noslot_pfn(fault->pfn);
+
+	if (try_asi_map)
+		vcpu_fill_asi_pgtbl_pool(vcpu);
+
 	r = RET_PF_RETRY;
 
 	if (is_tdp_mmu_fault)
@@ -4051,6 +4090,9 @@ static int direct_page_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	r = make_mmu_pages_available(vcpu);
 	if (r)
 		goto out_unlock;
+
+	if (try_asi_map)
+		asi_map_gfn_range(vcpu, fault->slot, fault->gfn, 1);
 
 	if (is_tdp_mmu_fault)
 		r = kvm_tdp_mmu_map(vcpu, fault);
@@ -5584,6 +5626,8 @@ int kvm_mmu_create(struct kvm_vcpu *vcpu)
 
 	vcpu->arch.nested_mmu.translate_gpa = translate_nested_gpa;
 
+	asi_init_pgtbl_pool(&vcpu->arch.asi_pgtbl_pool);
+
 	ret = __kvm_mmu_create(vcpu, &vcpu->arch.guest_mmu);
 	if (ret)
 		return ret;
@@ -5713,6 +5757,15 @@ static void kvm_mmu_invalidate_zap_pages_in_memslot(struct kvm *kvm,
 			struct kvm_memory_slot *slot,
 			struct kvm_page_track_notifier_node *node)
 {
+	/*
+	 * Currently, we just zap the entire address range, instead of only the
+	 * memslot. So we also just asi_unmap the entire userspace. But in the
+	 * future, if we zap only the range belonging to the memslot, then we
+	 * should also asi_unmap only that range.
+	 */
+	if (!treat_all_userspace_as_nonsensitive)
+		asi_unmap_user(kvm->asi, 0, TASK_SIZE_MAX);
+
 	kvm_mmu_zap_all_fast(kvm);
 }
 
@@ -6194,6 +6247,7 @@ void kvm_mmu_destroy(struct kvm_vcpu *vcpu)
 	free_mmu_pages(&vcpu->arch.root_mmu);
 	free_mmu_pages(&vcpu->arch.guest_mmu);
 	mmu_free_memory_caches(vcpu);
+	asi_clear_pgtbl_pool(&vcpu->arch.asi_pgtbl_pool);
 }
 
 void kvm_mmu_module_exit(void)

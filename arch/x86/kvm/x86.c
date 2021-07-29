@@ -8722,7 +8722,10 @@ int kvm_arch_init(void *opaque)
 		goto out_free_percpu;
 
 	if (ops->runtime_ops->flush_sensitive_cpu_state) {
-		r = asi_register_class("KVM", ASI_MAP_STANDARD_NONSENSITIVE,
+		r = asi_register_class("KVM",
+				       ASI_MAP_STANDARD_NONSENSITIVE |
+				       (treat_all_userspace_as_nonsensitive ?
+					ASI_MAP_ALL_USERSPACE : 0),
 				       &kvm_asi_hooks);
 		if (r < 0)
 			goto out_mmu_exit;
@@ -9675,6 +9678,17 @@ void kvm_arch_mmu_notifier_invalidate_range(struct kvm *kvm,
 	apic_address = gfn_to_hva(kvm, APIC_DEFAULT_PHYS_BASE >> PAGE_SHIFT);
 	if (start <= apic_address && apic_address < end)
 		kvm_make_all_cpus_request(kvm, KVM_REQ_APIC_PAGE_RELOAD);
+
+	if (!treat_all_userspace_as_nonsensitive)
+		asi_unmap_user(kvm->asi, (void *)start, end - start);
+}
+
+void kvm_arch_mmu_notifier_invalidate_range_start(struct kvm *kvm,
+						  unsigned long start,
+						  unsigned long end)
+{
+	if (!treat_all_userspace_as_nonsensitive)
+		asi_unmap_user(kvm->asi, (void *)start, end - start);
 }
 
 void kvm_vcpu_reload_apic_access_page(struct kvm_vcpu *vcpu)
@@ -11874,6 +11888,9 @@ void kvm_arch_commit_memory_region(struct kvm *kvm,
 
 void kvm_arch_flush_shadow_all(struct kvm *kvm)
 {
+	if (!treat_all_userspace_as_nonsensitive)
+		asi_unmap_user(kvm->asi, 0, TASK_SIZE_MAX);
+
 	kvm_mmu_zap_all(kvm);
 }
 

@@ -681,6 +681,8 @@ struct kvm_vcpu_arch {
 	struct kvm_mmu_memory_cache mmu_gfn_array_cache;
 	struct kvm_mmu_memory_cache mmu_page_header_cache;
 
+	struct asi_pgtbl_pool asi_pgtbl_pool;
+
 	/*
 	 * QEMU userspace and the guest each have their own FPU state.
 	 * In vcpu_run, we switch between the user and guest FPU contexts.

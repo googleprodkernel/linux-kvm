@@ -162,6 +162,12 @@ __weak void kvm_arch_mmu_notifier_invalidate_range(struct kvm *kvm,
 {
 }
 
+__weak void kvm_arch_mmu_notifier_invalidate_range_start(struct kvm *kvm,
+							 unsigned long start,
+							 unsigned long end)
+{
+}
+
 bool kvm_is_zone_device_pfn(kvm_pfn_t pfn)
 {
 	/*
@@ -685,6 +691,7 @@ static int kvm_mmu_notifier_invalidate_range_start(struct mmu_notifier *mn,
 	spin_unlock(&kvm->mn_invalidate_lock);
 
 	__kvm_handle_hva_range(kvm, &hva_range);
+	kvm_arch_mmu_notifier_invalidate_range_start(kvm, range->start, range->end);
 
 	return 0;
 }

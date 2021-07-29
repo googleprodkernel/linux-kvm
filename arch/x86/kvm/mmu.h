@@ -49,6 +49,12 @@
 
 #define KVM_MMU_CR0_ROLE_BITS (X86_CR0_PG | X86_CR0_WP)
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+extern bool treat_all_userspace_as_nonsensitive;
+#else
+#define treat_all_userspace_as_nonsensitive true
+#endif
+
 static __always_inline u64 rsvd_bits(int s, int e)
 {
 	BUILD_BUG_ON(__builtin_constant_p(e) && __builtin_constant_p(s) && e < s);

@@ -584,6 +584,9 @@ FNAME(prefetch_gpte)(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp,
 	if (is_error_pfn(pfn))
 		return false;
 
+	if (!treat_all_userspace_as_nonsensitive)
+		asi_map_gfn_range(vcpu, slot, gfn, 1);
+
 	mmu_set_spte(vcpu, slot, spte, pte_access, gfn, pfn, NULL);
 	kvm_release_pfn_clean(pfn);
 	return true;
@@ -836,6 +839,7 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	int r;
 	unsigned long mmu_seq;
 	bool is_self_change_mapping;
+	bool try_asi_map;
 
 	pgprintk("%s: addr %lx err %x\n", __func__, fault->addr, fault->error_code);
 	WARN_ON_ONCE(fault->is_tdp);
@@ -890,6 +894,12 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	if (handle_abnormal_pfn(vcpu, fault, walker.pte_access, &r))
 		return r;
 
+	try_asi_map = !treat_all_userspace_as_nonsensitive &&
+		      !is_noslot_pfn(fault->pfn);
+
+	if (try_asi_map)
+		vcpu_fill_asi_pgtbl_pool(vcpu);
+
 	/*
 	 * Do not change pte_access if the pfn is a mmio page, otherwise
 	 * we will cache the incorrect access into mmio spte.
@@ -919,6 +929,10 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	r = make_mmu_pages_available(vcpu);
 	if (r)
 		goto out_unlock;
+
+	if (try_asi_map)
+		asi_map_gfn_range(vcpu, fault->slot, walker.gfn, 1);
+
 	r = FNAME(fetch)(vcpu, fault, &walker);
 	kvm_mmu_audit(vcpu, AUDIT_POST_PAGE_FAULT);
 
