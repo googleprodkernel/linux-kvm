@@ -94,6 +94,7 @@ module_param_named(flush_on_reuse, force_flush_and_sync_on_reuse, bool, 0644);
 #ifdef CONFIG_ADDRESS_SPACE_ISOLATION
 bool __ro_after_init treat_all_userspace_as_nonsensitive;
 module_param(treat_all_userspace_as_nonsensitive, bool, 0444);
+EXPORT_SYMBOL_GPL(treat_all_userspace_as_nonsensitive);
 #endif
 
 /*
@@ -2768,6 +2769,15 @@ static void asi_map_gfn_range(struct kvm_vcpu *vcpu,
 {
 	int err;
 	size_t hva = __gfn_to_hva_memslot(slot, gfn);
+
+	/*
+	 * For now, we just don't map any guest memory when using nested
+	 * virtualization. In the future, we could potentially map some
+	 * portions of guest memory which are known to contain only memory
+	 * which would be considered non-sensitive.
+	 */
+	if (vcpu->kvm->arch.nested_virt_enabled_count)
+		return;
 
 	err = asi_map_user(vcpu->kvm->asi, (void *)hva, PAGE_SIZE * npages,
 			   &vcpu->arch.asi_pgtbl_pool, slot->userspace_addr,

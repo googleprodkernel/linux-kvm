@@ -1201,6 +1201,12 @@ struct kvm_arch {
 	struct list_head tdp_mmu_pages;
 
 	/*
+	 * Number of VCPUs that have enabled nested virtualization.
+	 * Currently only maintained when ASI is enabled.
+	 */
+	int nested_virt_enabled_count;
+
+	/*
 	 * Protects accesses to the following fields when the MMU lock
 	 * is held in read mode:
 	 *  - tdp_mmu_roots (above)

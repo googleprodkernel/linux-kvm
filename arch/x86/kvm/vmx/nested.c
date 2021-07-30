@@ -318,6 +318,14 @@ static void free_nested(struct kvm_vcpu *vcpu)
 	nested_release_evmcs(vcpu);
 
 	free_loaded_vmcs(&vmx->nested.vmcs02);
+
+	if (cpu_feature_enabled(X86_FEATURE_ASI) &&
+	    !treat_all_userspace_as_nonsensitive) {
+		write_lock(&vcpu->kvm->mmu_lock);
+		WARN_ON(vcpu->kvm->arch.nested_virt_enabled_count <= 0);
+		vcpu->kvm->arch.nested_virt_enabled_count--;
+		write_unlock(&vcpu->kvm->mmu_lock);
+	}
 }
 
 /*
@@ -4874,6 +4882,20 @@ static int enter_vmx_operation(struct kvm_vcpu *vcpu)
 	if (vmx_pt_mode_is_host_guest()) {
 		vmx->pt_desc.guest.ctl = 0;
 		pt_update_intercept_for_msr(vcpu);
+	}
+
+	if (cpu_feature_enabled(X86_FEATURE_ASI) &&
+	    !treat_all_userspace_as_nonsensitive) {
+		/*
+		 * We do the increment under the MMU lock in order to prevent
+		 * it from happening concurrently with asi_map_gfn_range().
+		 */
+		write_lock(&vcpu->kvm->mmu_lock);
+		WARN_ON(vcpu->kvm->arch.nested_virt_enabled_count < 0);
+		vcpu->kvm->arch.nested_virt_enabled_count++;
+		write_unlock(&vcpu->kvm->mmu_lock);
+
+		asi_unmap_user(vcpu->kvm->asi, 0, TASK_SIZE_MAX);
 	}
 
 	return 0;
