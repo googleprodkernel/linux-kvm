@@ -137,6 +137,12 @@ struct kmem_cache {
 	struct kasan_cache kasan_info;
 #endif
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	struct kmem_local_cache_info local_cache_info;
+	/* For propagation, maximum size of a stored attr */
+	unsigned int max_attr_size;
+#endif
+
 	unsigned int useroffset;	/* Usercopy region offset */
 	unsigned int usersize;		/* Usercopy region size */
 

@@ -289,6 +289,21 @@ static void debugfs_slab_add(struct kmem_cache *);
 static inline void debugfs_slab_add(struct kmem_cache *s) { }
 #endif
 
+#if defined(CONFIG_SYSFS) && defined(CONFIG_ADDRESS_SPACE_ISOLATION)
+static void propagate_slab_attrs_from_parent(struct kmem_cache *s);
+static void propagate_slab_attr_to_children(struct kmem_cache *s,
+					    struct attribute *attr,
+					    const char *buf, size_t len);
+#else
+static inline void propagate_slab_attrs_from_parent(struct kmem_cache *s) { }
+
+static inline
+void propagate_slab_attr_to_children(struct kmem_cache *s,
+				     struct attribute *attr,
+				     const char *buf, size_t len)
+{ }
+#endif
+
 static inline void stat(const struct kmem_cache *s, enum stat_item si)
 {
 #ifdef CONFIG_SLUB_STATS
@@ -2015,6 +2030,7 @@ static void __free_slab(struct kmem_cache *s, struct page *page)
 	if (current->reclaim_state)
 		current->reclaim_state->reclaimed_slab += pages;
 	unaccount_slab_page(page, order, s);
+	restore_page_nonsensitive_metadata(page, s);
 	__free_pages(page, order);
 }
 
@@ -4204,6 +4220,8 @@ static int kmem_cache_open(struct kmem_cache *s, slab_flags_t flags)
 		}
 	}
 
+	set_nonsensitive_cache_params(s);
+
 #if defined(CONFIG_HAVE_CMPXCHG_DOUBLE) && \
     defined(CONFIG_HAVE_ALIGNED_STRUCT_PAGE)
 	if (system_has_cmpxchg_double() && (s->flags & SLAB_NO_CMPXCHG) == 0)
@@ -4797,6 +4815,10 @@ static struct kmem_cache * __init bootstrap(struct kmem_cache *static_cache)
 #endif
 	}
 	list_add(&s->list, &slab_caches);
+	init_local_cache_info(s, NULL);
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	list_del(&static_cache->root_caches_node);
+#endif
 	return s;
 }
 
@@ -4863,7 +4885,7 @@ struct kmem_cache *
 __kmem_cache_alias(const char *name, unsigned int size, unsigned int align,
 		   slab_flags_t flags, void (*ctor)(void *))
 {
-	struct kmem_cache *s;
+	struct kmem_cache *s, *c;
 
 	s = find_mergeable(size, align, flags, name, ctor);
 	if (s) {
@@ -4875,6 +4897,11 @@ __kmem_cache_alias(const char *name, unsigned int size, unsigned int align,
 		 */
 		s->object_size = max(s->object_size, size);
 		s->inuse = max(s->inuse, ALIGN(size, sizeof(void *)));
+
+		for_each_child_cache(c, s) {
+			c->object_size = s->object_size;
+			c->inuse = max(c->inuse, ALIGN(size, sizeof(void *)));
+		}
 
 		if (sysfs_slab_alias(s, name)) {
 			s->refcount--;
@@ -4889,6 +4916,9 @@ int __kmem_cache_create(struct kmem_cache *s, slab_flags_t flags)
 {
 	int err;
 
+	if (!static_asi_enabled())
+		flags &= ~SLAB_NONSENSITIVE;
+
 	err = kmem_cache_open(s, flags);
 	if (err)
 		return err;
@@ -4896,6 +4926,8 @@ int __kmem_cache_create(struct kmem_cache *s, slab_flags_t flags)
 	/* Mutex is not taken during early boot */
 	if (slab_state <= UP)
 		return 0;
+
+	propagate_slab_attrs_from_parent(s);
 
 	err = sysfs_slab_add(s);
 	if (err) {
@@ -5619,7 +5651,7 @@ static ssize_t shrink_store(struct kmem_cache *s,
 			const char *buf, size_t length)
 {
 	if (buf[0] == '1')
-		kmem_cache_shrink(s);
+		kmem_cache_shrink_all(s);
 	else
 		return -EINVAL;
 	return length;
@@ -5829,6 +5861,87 @@ static ssize_t slab_attr_show(struct kobject *kobj,
 	return err;
 }
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+static void propagate_slab_attrs_from_parent(struct kmem_cache *s)
+{
+	int i;
+	char *buffer = NULL;
+	struct kmem_cache *root_cache;
+
+	if (is_root_cache(s))
+		return;
+
+	root_cache = s->local_cache_info.root_cache;
+
+	/*
+	 * This mean this cache had no attribute written. Therefore, no point
+	 * in copying default values around
+	 */
+	if (!root_cache->max_attr_size)
+		return;
+
+	for (i = 0; i < ARRAY_SIZE(slab_attrs); i++) {
+		char mbuf[64];
+		char *buf;
+		struct slab_attribute *attr = to_slab_attr(slab_attrs[i]);
+		ssize_t len;
+
+		if (!attr || !attr->store || !attr->show)
+			continue;
+
+		/*
+		 * It is really bad that we have to allocate here, so we will
+		 * do it only as a fallback. If we actually allocate, though,
+		 * we can just use the allocated buffer until the end.
+		 *
+		 * Most of the slub attributes will tend to be very small in
+		 * size, but sysfs allows buffers up to a page, so they can
+		 * theoretically happen.
+		 */
+		if (buffer) {
+			buf = buffer;
+		} else if (root_cache->max_attr_size < ARRAY_SIZE(mbuf) &&
+			 !IS_ENABLED(CONFIG_SLUB_STATS)) {
+			buf = mbuf;
+		} else {
+			buffer = (char *)get_zeroed_page(GFP_KERNEL);
+			if (WARN_ON(!buffer))
+				continue;
+			buf = buffer;
+		}
+
+		len = attr->show(root_cache, buf);
+		if (len > 0)
+			attr->store(s, buf, len);
+	}
+
+	if (buffer)
+		free_page((unsigned long)buffer);
+}
+
+static void propagate_slab_attr_to_children(struct kmem_cache *s,
+					    struct attribute *attr,
+					    const char *buf, size_t len)
+{
+	struct kmem_cache *c;
+	struct slab_attribute *attribute = to_slab_attr(attr);
+
+	if (static_asi_enabled()) {
+		mutex_lock(&slab_mutex);
+
+		if (s->max_attr_size < len)
+			s->max_attr_size = len;
+
+		for_each_child_cache(c, s)
+			attribute->store(c, buf, len);
+
+		mutex_unlock(&slab_mutex);
+	}
+}
+
+#endif
+
 static ssize_t slab_attr_store(struct kobject *kobj,
 				struct attribute *attr,
 				const char *buf, size_t len)
@@ -5844,6 +5957,27 @@ static ssize_t slab_attr_store(struct kobject *kobj,
 		return -EIO;
 
 	err = attribute->store(s, buf, len);
+
+	/*
+	 * This is a best effort propagation, so this function's return
+	 * value will be determined by the parent cache only. This is
+	 * basically because not all attributes will have a well
+	 * defined semantics for rollbacks - most of the actions will
+	 * have permanent effects.
+	 *
+	 * Returning the error value of any of the children that fail
+	 * is not 100 % defined, in the sense that users seeing the
+	 * error code won't be able to know anything about the state of
+	 * the cache.
+	 *
+	 * Only returning the error code for the parent cache at least
+	 * has well defined semantics. The cache being written to
+	 * directly either failed or succeeded, in which case we loop
+	 * through the descendants with best-effort propagation.
+	 */
+	if (slab_state >= FULL && err >= 0 && is_root_cache(s))
+		propagate_slab_attr_to_children(s, attr, buf, len);
+
 	return err;
 }
 
@@ -5866,7 +6000,7 @@ static struct kset *slab_kset;
 
 static inline struct kset *cache_kset(struct kmem_cache *s)
 {
-	return slab_kset;
+	return is_root_cache(s) ? slab_kset : NULL;
 }
 
 #define ID_STR_LENGTH 64

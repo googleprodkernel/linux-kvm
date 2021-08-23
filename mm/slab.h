@@ -216,6 +216,7 @@ int __kmem_cache_shutdown(struct kmem_cache *);
 void __kmem_cache_release(struct kmem_cache *);
 int __kmem_cache_shrink(struct kmem_cache *);
 void slab_kmem_cache_release(struct kmem_cache *);
+void kmem_cache_shrink_all(struct kmem_cache *s);
 
 struct seq_file;
 struct file;
@@ -344,6 +345,7 @@ void restore_page_nonsensitive_metadata(struct page *page,
 }
 
 void set_nonsensitive_cache_params(struct kmem_cache *s);
+void init_local_cache_info(struct kmem_cache *s, struct kmem_cache *root);
 
 #else /* CONFIG_ADDRESS_SPACE_ISOLATION */
 
@@ -379,6 +381,9 @@ static inline void restore_page_nonsensitive_metadata(struct page *page,
 { }
 
 static inline void set_nonsensitive_cache_params(struct kmem_cache *s) { }
+
+static inline
+void init_local_cache_info(struct kmem_cache *s, struct kmem_cache *root) { }
 
 #endif /* CONFIG_ADDRESS_SPACE_ISOLATION */
 

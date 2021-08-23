@@ -142,7 +142,7 @@ int __kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t nr,
 
 LIST_HEAD(slab_root_caches);
 
-static void init_local_cache_info(struct kmem_cache *s, struct kmem_cache *root)
+void init_local_cache_info(struct kmem_cache *s, struct kmem_cache *root)
 {
 	if (root) {
 		s->local_cache_info.root_cache = root;
@@ -193,9 +193,6 @@ void set_nonsensitive_cache_params(struct kmem_cache *s)
 }
 
 #else
-
-static inline
-void init_local_cache_info(struct kmem_cache *s, struct kmem_cache *root) { }
 
 static inline void cleanup_local_cache_info(struct kmem_cache *s) { }
 
@@ -643,6 +640,34 @@ int kmem_cache_shrink(struct kmem_cache *cachep)
 	return ret;
 }
 EXPORT_SYMBOL(kmem_cache_shrink);
+
+/**
+ * kmem_cache_shrink_all - shrink a cache and all child caches for root cache
+ * @s: The cache pointer
+ */
+void kmem_cache_shrink_all(struct kmem_cache *s)
+{
+	struct kmem_cache *c;
+
+	if (!static_asi_enabled() || !is_root_cache(s)) {
+		kmem_cache_shrink(s);
+		return;
+	}
+
+	kasan_cache_shrink(s);
+	__kmem_cache_shrink(s);
+
+	/*
+	 * We have to take the slab_mutex to protect from the child cache list
+	 * modification.
+	 */
+	mutex_lock(&slab_mutex);
+	for_each_child_cache(c, s) {
+		kasan_cache_shrink(c);
+		__kmem_cache_shrink(c);
+	}
+	mutex_unlock(&slab_mutex);
+}
 
 bool slab_is_available(void)
 {
