@@ -120,6 +120,12 @@
 /* Slab deactivation flag */
 #define SLAB_DEACTIVATED	((slab_flags_t __force)0x10000000U)
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+#define SLAB_GLOBAL_NONSENSITIVE ((slab_flags_t __force)0x20000000U)
+#else
+#define SLAB_GLOBAL_NONSENSITIVE 0
+#endif
+
 /*
  * ZERO_SIZE_PTR will be returned for zero sized kmalloc requests.
  *
@@ -329,6 +335,11 @@ enum kmalloc_cache_type {
 extern struct kmem_cache *
 kmalloc_caches[NR_KMALLOC_TYPES][KMALLOC_SHIFT_HIGH + 1];
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+extern struct kmem_cache *
+nonsensitive_kmalloc_caches[NR_KMALLOC_TYPES][KMALLOC_SHIFT_HIGH + 1];
+#endif
+
 /*
  * Define gfp bits that should not be set for KMALLOC_NORMAL.
  */
@@ -359,6 +370,17 @@ static __always_inline enum kmalloc_cache_type kmalloc_type(gfp_t flags)
 		return KMALLOC_RECLAIM;
 	else
 		return KMALLOC_CGROUP;
+}
+
+static __always_inline struct kmem_cache *get_kmalloc_cache(gfp_t flags,
+							    uint index)
+{
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+	if (static_asi_enabled() && (flags & __GFP_GLOBAL_NONSENSITIVE))
+		return nonsensitive_kmalloc_caches[kmalloc_type(flags)][index];
+#endif
+	return kmalloc_caches[kmalloc_type(flags)][index];
 }
 
 /*
@@ -587,9 +609,8 @@ static __always_inline __alloc_size(1) void *kmalloc(size_t size, gfp_t flags)
 		if (!index)
 			return ZERO_SIZE_PTR;
 
-		return kmem_cache_alloc_trace(
-				kmalloc_caches[kmalloc_type(flags)][index],
-				flags, size);
+		return kmem_cache_alloc_trace(get_kmalloc_cache(flags, index),
+					      flags, size);
 #endif
 	}
 	return __kmalloc(size, flags);
@@ -605,9 +626,8 @@ static __always_inline __alloc_size(1) void *kmalloc_node(size_t size, gfp_t fla
 		if (!i)
 			return ZERO_SIZE_PTR;
 
-		return kmem_cache_alloc_node_trace(
-				kmalloc_caches[kmalloc_type(flags)][i],
-						flags, node, size);
+		return kmem_cache_alloc_node_trace(get_kmalloc_cache(flags, i),
+						   flags, node, size);
 	}
 #endif
 	return __kmalloc_node(size, flags, node);

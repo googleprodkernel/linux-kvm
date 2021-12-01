@@ -1956,6 +1956,9 @@ int __kmem_cache_create(struct kmem_cache *cachep, slab_flags_t flags)
 		size = ALIGN(size, REDZONE_ALIGN);
 	}
 
+	if (!static_asi_enabled())
+		flags &= ~SLAB_NONSENSITIVE;
+
 	/* 3) caller mandated alignment */
 	if (ralign < cachep->align) {
 		ralign = cachep->align;
@@ -2058,6 +2061,8 @@ done:
 		cachep->allocflags |= GFP_DMA32;
 	if (flags & SLAB_RECLAIM_ACCOUNT)
 		cachep->allocflags |= __GFP_RECLAIMABLE;
+	if (flags & SLAB_GLOBAL_NONSENSITIVE)
+		cachep->allocflags |= __GFP_GLOBAL_NONSENSITIVE;
 	cachep->size = size;
 	cachep->reciprocal_buffer_size = reciprocal_value(size);
 

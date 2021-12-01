@@ -77,6 +77,10 @@ extern struct kmem_cache *kmem_cache;
 /* A table of kmalloc cache names and sizes */
 extern const struct kmalloc_info_struct {
 	const char *name[NR_KMALLOC_TYPES];
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	const char *nonsensitive_name[NR_KMALLOC_TYPES];
+#endif
+	slab_flags_t flags[NR_KMALLOC_TYPES];
 	unsigned int size;
 } kmalloc_info[];
 
@@ -124,11 +128,14 @@ static inline slab_flags_t kmem_cache_flags(unsigned int object_size,
 }
 #endif
 
+/* This will also include SLAB_LOCAL_NONSENSITIVE in a later patch. */
+#define SLAB_NONSENSITIVE SLAB_GLOBAL_NONSENSITIVE
 
 /* Legal flag mask for kmem_cache_create(), for various configurations */
 #define SLAB_CORE_FLAGS (SLAB_HWCACHE_ALIGN | SLAB_CACHE_DMA | \
 			 SLAB_CACHE_DMA32 | SLAB_PANIC | \
-			 SLAB_TYPESAFE_BY_RCU | SLAB_DEBUG_OBJECTS )
+			 SLAB_TYPESAFE_BY_RCU | SLAB_DEBUG_OBJECTS | \
+			 SLAB_NONSENSITIVE)
 
 #if defined(CONFIG_DEBUG_SLAB)
 #define SLAB_DEBUG_FLAGS (SLAB_RED_ZONE | SLAB_POISON | SLAB_STORE_USER)
@@ -490,6 +497,11 @@ static inline struct kmem_cache *slab_pre_alloc_hook(struct kmem_cache *s,
 	flags &= gfp_allowed_mask;
 
 	might_alloc(flags);
+
+	if (static_asi_enabled()) {
+		VM_BUG_ON(!(s->flags & SLAB_GLOBAL_NONSENSITIVE) &&
+			  (flags & __GFP_GLOBAL_NONSENSITIVE));
+	}
 
 	if (should_failslab(s, flags))
 		return NULL;

@@ -50,7 +50,7 @@ static DECLARE_WORK(slab_caches_to_rcu_destroy_work,
 		SLAB_FAILSLAB | kasan_never_merge())
 
 #define SLAB_MERGE_SAME (SLAB_RECLAIM_ACCOUNT | SLAB_CACHE_DMA | \
-			 SLAB_CACHE_DMA32 | SLAB_ACCOUNT)
+			 SLAB_CACHE_DMA32 | SLAB_ACCOUNT | SLAB_NONSENSITIVE)
 
 /*
  * Merge control. If this is set then no merging of slab caches will occur.
@@ -681,6 +681,15 @@ kmalloc_caches[NR_KMALLOC_TYPES][KMALLOC_SHIFT_HIGH + 1] __ro_after_init =
 { /* initialization for https://bugs.llvm.org/show_bug.cgi?id=42570 */ };
 EXPORT_SYMBOL(kmalloc_caches);
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+struct kmem_cache *
+nonsensitive_kmalloc_caches[NR_KMALLOC_TYPES][KMALLOC_SHIFT_HIGH + 1] __ro_after_init =
+{ /* initialization for https://bugs.llvm.org/show_bug.cgi?id=42570 */ };
+EXPORT_SYMBOL(nonsensitive_kmalloc_caches);
+
+#endif
+
 /*
  * Conversion table for small slabs sizes / 8 to the index in the
  * kmalloc array. This is necessary for slabs < 192 since we have non power
@@ -738,25 +747,34 @@ struct kmem_cache *kmalloc_slab(size_t size, gfp_t flags)
 		index = fls(size - 1);
 	}
 
-	return kmalloc_caches[kmalloc_type(flags)][index];
+	return get_kmalloc_cache(flags, index);
 }
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+#define __KMALLOC_NAME(type, base_name, sz)			\
+			.name[type] = base_name "-" #sz,	\
+			.nonsensitive_name[type] = "ns-" base_name "-" #sz,
+#else
+#define __KMALLOC_NAME(type, base_name, sz)			\
+			.name[type] = base_name "-" #sz,
+#endif
+
 #ifdef CONFIG_ZONE_DMA
-#define KMALLOC_DMA_NAME(sz)	.name[KMALLOC_DMA] = "dma-kmalloc-" #sz,
+#define KMALLOC_DMA_NAME(sz)	__KMALLOC_NAME(KMALLOC_DMA, "dma-kmalloc", sz)
 #else
 #define KMALLOC_DMA_NAME(sz)
 #endif
 
 #ifdef CONFIG_MEMCG_KMEM
-#define KMALLOC_CGROUP_NAME(sz)	.name[KMALLOC_CGROUP] = "kmalloc-cg-" #sz,
+#define KMALLOC_CGROUP_NAME(sz)	__KMALLOC_NAME(KMALLOC_CGROUP, "kmalloc-cg", sz)
 #else
 #define KMALLOC_CGROUP_NAME(sz)
 #endif
 
 #define INIT_KMALLOC_INFO(__size, __short_size)			\
 {								\
-	.name[KMALLOC_NORMAL]  = "kmalloc-" #__short_size,	\
-	.name[KMALLOC_RECLAIM] = "kmalloc-rcl-" #__short_size,	\
+	__KMALLOC_NAME(KMALLOC_NORMAL, "kmalloc", __short_size)	\
+	__KMALLOC_NAME(KMALLOC_RECLAIM, "kmalloc-rcl", __short_size) \
 	KMALLOC_CGROUP_NAME(__short_size)			\
 	KMALLOC_DMA_NAME(__short_size)				\
 	.size = __size,						\
@@ -846,18 +864,30 @@ void __init setup_kmalloc_cache_index_table(void)
 static void __init
 new_kmalloc_cache(int idx, enum kmalloc_cache_type type, slab_flags_t flags)
 {
+	struct kmem_cache *(*caches)[KMALLOC_SHIFT_HIGH + 1] = kmalloc_caches;
+	const char *name = kmalloc_info[idx].name[type];
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+	if (flags & SLAB_NONSENSITIVE) {
+		caches = nonsensitive_kmalloc_caches;
+		name = kmalloc_info[idx].nonsensitive_name[type];
+	}
+#endif
+
 	if (type == KMALLOC_RECLAIM) {
 		flags |= SLAB_RECLAIM_ACCOUNT;
 	} else if (IS_ENABLED(CONFIG_MEMCG_KMEM) && (type == KMALLOC_CGROUP)) {
 		if (cgroup_memory_nokmem) {
-			kmalloc_caches[type][idx] = kmalloc_caches[KMALLOC_NORMAL][idx];
+			caches[type][idx] = caches[KMALLOC_NORMAL][idx];
 			return;
 		}
 		flags |= SLAB_ACCOUNT;
+	} else if (IS_ENABLED(CONFIG_ZONE_DMA) && (type == KMALLOC_DMA)) {
+		flags |= SLAB_CACHE_DMA;
 	}
 
-	kmalloc_caches[type][idx] = create_kmalloc_cache(
-					kmalloc_info[idx].name[type],
+	caches[type][idx] = create_kmalloc_cache(name,
 					kmalloc_info[idx].size, flags, 0,
 					kmalloc_info[idx].size);
 
@@ -866,7 +896,7 @@ new_kmalloc_cache(int idx, enum kmalloc_cache_type type, slab_flags_t flags)
 	 * KMALLOC_NORMAL caches.
 	 */
 	if (IS_ENABLED(CONFIG_MEMCG_KMEM) && (type == KMALLOC_NORMAL))
-		kmalloc_caches[type][idx]->refcount = -1;
+		caches[type][idx]->refcount = -1;
 }
 
 /*
@@ -908,15 +938,24 @@ void __init create_kmalloc_caches(slab_flags_t flags)
 	for (i = 0; i <= KMALLOC_SHIFT_HIGH; i++) {
 		struct kmem_cache *s = kmalloc_caches[KMALLOC_NORMAL][i];
 
-		if (s) {
-			kmalloc_caches[KMALLOC_DMA][i] = create_kmalloc_cache(
-				kmalloc_info[i].name[KMALLOC_DMA],
-				kmalloc_info[i].size,
-				SLAB_CACHE_DMA | flags, 0,
-				kmalloc_info[i].size);
-		}
+		if (s)
+			new_kmalloc_cache(i, KMALLOC_DMA, flags);
 	}
 #endif
+	/*
+	 * TODO: We may want to make slab allocations without exiting ASI.
+	 * In that case, the cache metadata itself would need to be
+	 * treated as non-sensitive and mapped as such, and we would need to
+	 * do the bootstrap much more carefully. We can do that if we find
+	 * that slab allocations while inside a restricted address space are
+	 * frequent enough to warrant the additional complexity.
+	 */
+	if (static_asi_enabled())
+		for (type = KMALLOC_NORMAL; type < NR_KMALLOC_TYPES; type++)
+			for (i = 0; i <= KMALLOC_SHIFT_HIGH; i++)
+				if (kmalloc_caches[type][i])
+					new_kmalloc_cache(i, type,
+						flags | SLAB_NONSENSITIVE);
 }
 #endif /* !CONFIG_SLOB */
 
