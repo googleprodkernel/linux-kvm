@@ -13,6 +13,7 @@
 #include <linux/seq_file.h>
 #include <linux/proc_fs.h>
 #include <linux/vmalloc.h>
+#include <linux/slab.h>
 
 #include <asm/fpu/api.h>
 #include <asm/fpu/regset.h>
@@ -1495,8 +1496,15 @@ arch_initcall(xfd_update_static_branch)
 
 void fpstate_free(struct fpu *fpu)
 {
-	if (fpu->fpstate && fpu->fpstate != &fpu->__fpstate)
-		vfree(fpu->fpstate);
+	WARN_ON_ONCE(cpu_feature_enabled(X86_FEATURE_ASI) &&
+		     fpu->fpstate == &fpu->__fpstate);
+
+	if (fpu->fpstate && fpu->fpstate != &fpu->__fpstate) {
+		if (fpu->fpstate->is_valloc)
+			vfree(fpu->fpstate);
+		else
+			kmem_cache_free(fpstate_cachep, fpu->fpstate);
+	}
 }
 
 /**
@@ -1574,7 +1582,14 @@ static int fpstate_realloc(u64 xfeatures, unsigned int ksize,
 
 	fpregs_unlock();
 
-	vfree(curfps);
+	WARN_ON_ONCE(cpu_feature_enabled(X86_FEATURE_ASI) && !curfps);
+	if (curfps) {
+		if (curfps->is_valloc)
+			vfree(curfps);
+		else
+			kmem_cache_free(fpstate_cachep, curfps);
+	}
+
 	return 0;
 }
 

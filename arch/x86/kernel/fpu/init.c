@@ -161,9 +161,11 @@ static void __init fpu__init_task_struct_size(void)
 
 	/*
 	 * Add back the dynamically-calculated register state
-	 * size.
+	 * size, except when ASI is enabled, since in that case
+	 * the FPU state is always allocated dynamically.
 	 */
-	task_size += fpu_kernel_cfg.default_size;
+	if (!cpu_feature_enabled(X86_FEATURE_ASI))
+		task_size += fpu_kernel_cfg.default_size;
 
 	/*
 	 * We dynamically size 'struct fpu', so we require that
@@ -223,6 +225,7 @@ static void __init fpu__init_init_fpstate(void)
  */
 void __init fpu__init_system(struct cpuinfo_x86 *c)
 {
+	current->thread.fpu.fpstate = &current->thread.fpu.__fpstate;
 	fpstate_reset(&current->thread.fpu);
 	fpu__init_system_early_generic(c);
 

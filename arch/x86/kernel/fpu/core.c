@@ -59,6 +59,8 @@ static DEFINE_PER_CPU(bool, in_kernel_fpu);
  */
 DEFINE_PER_CPU(struct fpu *, fpu_fpregs_owner_ctx);
 
+struct kmem_cache *fpstate_cachep;
+
 static bool kernel_fpu_disabled(void)
 {
 	return this_cpu_read(in_kernel_fpu);
@@ -443,7 +445,9 @@ static void __fpstate_reset(struct fpstate *fpstate)
 void fpstate_reset(struct fpu *fpu)
 {
 	/* Set the fpstate pointer to the default fpstate */
-	fpu->fpstate = &fpu->__fpstate;
+	if (!cpu_feature_enabled(X86_FEATURE_ASI))
+		fpu->fpstate = &fpu->__fpstate;
+
 	__fpstate_reset(fpu->fpstate);
 
 	/* Initialize the permission related info in fpu */
@@ -464,6 +468,26 @@ static inline void fpu_inherit_perms(struct fpu *dst_fpu)
 	}
 }
 
+void fpstate_cache_init(void)
+{
+	if (cpu_feature_enabled(X86_FEATURE_ASI)) {
+		size_t fpstate_size;
+
+		/* TODO: Is the ALIGN-64 really needed? */
+		fpstate_size = fpu_kernel_cfg.default_size +
+			       ALIGN(offsetof(struct fpstate, regs), 64);
+
+		fpstate_cachep = kmem_cache_create_usercopy(
+						"fpstate",
+						fpstate_size,
+						__alignof__(struct fpstate),
+						SLAB_PANIC | SLAB_ACCOUNT,
+						offsetof(struct fpstate, regs),
+						fpu_kernel_cfg.default_size,
+						NULL);
+	}
+}
+
 /* Clone current's FPU state on fork */
 int fpu_clone(struct task_struct *dst, unsigned long clone_flags)
 {
@@ -472,6 +496,22 @@ int fpu_clone(struct task_struct *dst, unsigned long clone_flags)
 
 	/* The new task's FPU state cannot be valid in the hardware. */
 	dst_fpu->last_cpu = -1;
+
+	if (cpu_feature_enabled(X86_FEATURE_ASI)) {
+		dst_fpu->fpstate = kmem_cache_alloc_node(
+						fpstate_cachep, GFP_KERNEL,
+						page_to_nid(virt_to_page(dst)));
+		if (!dst_fpu->fpstate)
+			return -ENOMEM;
+
+		/*
+		 * TODO: We may be able to skip the copy since the registers are
+		 * restored below anyway.
+		 */
+		memcpy(dst_fpu->fpstate, src_fpu->fpstate,
+		       fpu_kernel_cfg.default_size +
+		       offsetof(struct fpstate, regs));
+	}
 
 	fpstate_reset(dst_fpu);
 
@@ -531,7 +571,8 @@ int fpu_clone(struct task_struct *dst, unsigned long clone_flags)
 void fpu_thread_struct_whitelist(unsigned long *offset, unsigned long *size)
 {
 	*offset = offsetof(struct thread_struct, fpu.__fpstate.regs);
-	*size = fpu_kernel_cfg.default_size;
+	*size = cpu_feature_enabled(X86_FEATURE_ASI)
+		? 0 : fpu_kernel_cfg.default_size;
 }
 
 /*

@@ -3,6 +3,7 @@
 #define __X86_KERNEL_FPU_INTERNAL_H
 
 extern struct fpstate init_fpstate;
+extern struct kmem_cache *fpstate_cachep;
 
 /* CPU feature check wrappers */
 static __always_inline __pure bool use_xsave(void)
