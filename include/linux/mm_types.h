@@ -707,6 +707,9 @@ extern struct mm_struct init_mm;
 #ifdef CONFIG_ADDRESS_SPACE_ISOLATION
 static inline bool mm_asi_enabled(struct mm_struct *mm)
 {
+        if (!mm)
+                return false;
+
         return mm->asi_enabled;
 }
 #else

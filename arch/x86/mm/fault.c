@@ -982,6 +982,8 @@ static int spurious_kernel_fault_check(unsigned long error_code, pte_t *pte)
 	return 1;
 }
 
+static int is_address_accessible_now(unsigned long error_code, unsigned long address,
+                              pgd_t *pgd);
 /*
  * Handle a spurious fault caused by a stale TLB entry.
  *
@@ -1003,15 +1005,13 @@ static int spurious_kernel_fault_check(unsigned long error_code, pte_t *pte)
  * See Intel Developer's Manual Vol 3 Section 4.10.4.3, bullet 3
  * (Optional Invalidation).
  */
+/* A spurious fault is also possible when Address Space Isolation (ASI) is in
+ * use. Specifically, code running withing an ASI domain touched memory outside
+ * the domain. This access causes a page-fault --> asi_exit() */
 static noinline int
 spurious_kernel_fault(unsigned long error_code, unsigned long address)
 {
 	pgd_t *pgd;
-	p4d_t *p4d;
-	pud_t *pud;
-	pmd_t *pmd;
-	pte_t *pte;
-	int ret;
 
 	/*
 	 * Only writes to RO or instruction fetches from NX may cause
@@ -1027,6 +1027,37 @@ spurious_kernel_fault(unsigned long error_code, unsigned long address)
 		return 0;
 
 	pgd = init_mm.pgd + pgd_index(address);
+        return is_address_accessible_now(error_code, address, pgd);
+}
+NOKPROBE_SYMBOL(spurious_kernel_fault);
+
+
+/* Check if an address (kernel or userspace) would cause a page fault if
+ * accessed now.
+ *
+ * For kernel addresses, pte_present and pmd_present are sufficioent. For
+ * userspace, we must use PTE_PRESENT and PMD_PRESENT, which will only check the
+ * present bits.
+ * The existing pmd_present() in arch/x86/include/asm/pgtable.h is misleading.
+ * The PMD page might be in the middle of split_huge_page with present bit
+ * clear, but pmd_present will still return true. We are inteerested in knowing
+ * if the page is accessible to hardware - that is - the present bit is 1. */
+#define PMD_PRESENT(pmd) (pmd_flags(pmd) & _PAGE_PRESENT)
+
+/* pte_present will return true is _PAGE_PROTNONE is 1. We care if the hardware
+ * can actually access the page right now. */
+#define PTE_PRESENT(pte) (pte_flags(pte) & _PAGE_PRESENT)
+
+static noinline int
+is_address_accessible_now(unsigned long error_code, unsigned long address,
+                          pgd_t *pgd)
+{
+	p4d_t *p4d;
+	pud_t *pud;
+	pmd_t *pmd;
+	pte_t *pte;
+        int ret;
+
 	if (!pgd_present(*pgd))
 		return 0;
 
@@ -1045,14 +1076,14 @@ spurious_kernel_fault(unsigned long error_code, unsigned long address)
 		return spurious_kernel_fault_check(error_code, (pte_t *) pud);
 
 	pmd = pmd_offset(pud, address);
-	if (!pmd_present(*pmd))
+	if (!PMD_PRESENT(*pmd))
 		return 0;
 
 	if (pmd_large(*pmd))
 		return spurious_kernel_fault_check(error_code, (pte_t *) pmd);
 
 	pte = pte_offset_kernel(pmd, address);
-	if (!pte_present(*pte))
+	if (!PTE_PRESENT(*pte))
 		return 0;
 
 	ret = spurious_kernel_fault_check(error_code, pte);
@@ -1068,7 +1099,6 @@ spurious_kernel_fault(unsigned long error_code, unsigned long address)
 
 	return ret;
 }
-NOKPROBE_SYMBOL(spurious_kernel_fault);
 
 int show_unhandled_signals = 1;
 
@@ -1504,6 +1534,20 @@ DEFINE_IDTENTRY_RAW_ERRORCODE(exc_page_fault)
 	 * the fixup on the next page fault.
 	 */
 	struct asi *asi = asi_get_current();
+        if (asi)
+                asi_exit();
+
+        /* handle_page_fault() might call BUG() if we run it for a kernel
+         * address. This might be the case if we got here due to an ASI fault.
+         * We avoid this case by checking whether the address is now, after a
+         * potential asi_exit(), accessible by hardware. If it is - there's
+         * nothing to do.
+         */
+        if (current && mm_asi_enabled(current->mm)) {
+                pgd_t *pgd = (pgd_t*)__va(read_cr3_pa()) + pgd_index(address);
+                if (is_address_accessible_now(error_code, address, pgd))
+                        return;
+        }
 
 	prefetchw(&current->mm->mmap_lock);
 
