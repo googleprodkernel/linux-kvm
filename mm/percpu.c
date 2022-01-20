@@ -172,7 +172,7 @@ struct pcpu_chunk *pcpu_reserved_chunk __ro_after_init;
 DEFINE_SPINLOCK(pcpu_lock);	/* all internal data structures */
 static DEFINE_MUTEX(pcpu_alloc_mutex);	/* chunk create/destroy, [de]pop, map ext */
 
-struct list_head *pcpu_chunk_lists __ro_after_init; /* chunk list slots */
+struct list_head *pcpu_chunk_lists[PCPU_NR_CHUNK_TYPES] __ro_after_init; /* chunk list slots */
 
 /* chunks which need their map areas extended, protected by pcpu_lock */
 static LIST_HEAD(pcpu_map_extend_chunks);
@@ -531,10 +531,12 @@ static void __pcpu_chunk_move(struct pcpu_chunk *chunk, int slot,
 			      bool move_front)
 {
 	if (chunk != pcpu_reserved_chunk) {
+                struct list_head *pcpu_type_lists =
+                          pcpu_chunk_lists[pcpu_chunk_type(chunk)];
 		if (move_front)
-			list_move(&chunk->list, &pcpu_chunk_lists[slot]);
+			list_move(&chunk->list, &pcpu_type_lists[slot]);
 		else
-			list_move_tail(&chunk->list, &pcpu_chunk_lists[slot]);
+			list_move_tail(&chunk->list, &pcpu_type_lists[slot]);
 	}
 }
 
@@ -570,13 +572,16 @@ static void pcpu_chunk_relocate(struct pcpu_chunk *chunk, int oslot)
 
 static void pcpu_isolate_chunk(struct pcpu_chunk *chunk)
 {
+	struct list_head *pcpu_type_lists =
+		  pcpu_chunk_lists[pcpu_chunk_type(chunk)];
+
 	lockdep_assert_held(&pcpu_lock);
 
 	if (!chunk->isolated) {
 		chunk->isolated = true;
 		pcpu_nr_empty_pop_pages -= chunk->nr_empty_pop_pages;
 	}
-	list_move(&chunk->list, &pcpu_chunk_lists[pcpu_to_depopulate_slot]);
+	list_move(&chunk->list, &pcpu_type_lists[pcpu_to_depopulate_slot]);
 }
 
 static void pcpu_reintegrate_chunk(struct pcpu_chunk *chunk)
@@ -1438,7 +1443,8 @@ static struct pcpu_chunk * __init pcpu_alloc_first_chunk(unsigned long tmp_addr,
 	return chunk;
 }
 
-static struct pcpu_chunk *pcpu_alloc_chunk(gfp_t gfp)
+static struct pcpu_chunk *pcpu_alloc_chunk(enum pcpu_chunk_type type,
+                                           gfp_t gfp)
 {
 	struct pcpu_chunk *chunk;
 	int region_bits;
@@ -1474,6 +1480,13 @@ static struct pcpu_chunk *pcpu_alloc_chunk(gfp_t gfp)
 		if (!chunk->obj_cgroups)
 			goto objcg_fail;
 	}
+#endif
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+        /* TODO: (oweisse) do asi_map for nonsensitive chunks */
+        if (type == PCPU_CHUNK_ASI_NONSENSITIVE)
+                chunk->is_asi_nonsensitive = true;
+        else
+                chunk->is_asi_nonsensitive = false;
 #endif
 
 	pcpu_init_md_blocks(chunk);
@@ -1580,7 +1593,8 @@ static void pcpu_depopulate_chunk(struct pcpu_chunk *chunk,
 				  int page_start, int page_end);
 static void pcpu_post_unmap_tlb_flush(struct pcpu_chunk *chunk,
 				      int page_start, int page_end);
-static struct pcpu_chunk *pcpu_create_chunk(gfp_t gfp);
+static struct pcpu_chunk *pcpu_create_chunk(enum pcpu_chunk_type type,
+					    gfp_t gfp);
 static void pcpu_destroy_chunk(struct pcpu_chunk *chunk);
 static struct page *pcpu_addr_to_page(void *addr);
 static int __init pcpu_verify_alloc_info(const struct pcpu_alloc_info *ai);
@@ -1733,6 +1747,8 @@ static void __percpu *pcpu_alloc(size_t size, size_t align, bool reserved,
 	unsigned long flags;
 	void __percpu *ptr;
 	size_t bits, bit_align;
+        enum pcpu_chunk_type type;
+        struct list_head *pcpu_type_lists;
 
 	gfp = current_gfp_context(gfp);
 	/* whitelisted flags that can be passed to the backing allocators */
@@ -1762,6 +1778,16 @@ static void __percpu *pcpu_alloc(size_t size, size_t align, bool reserved,
 
 	if (unlikely(!pcpu_memcg_pre_alloc_hook(size, gfp, &objcg)))
 		return NULL;
+
+        type = PCPU_CHUNK_ROOT;
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+        if (static_asi_enabled() && (gfp & __GFP_GLOBAL_NONSENSITIVE)) {
+                 type = PCPU_CHUNK_ASI_NONSENSITIVE;
+                 pcpu_gfp |= __GFP_GLOBAL_NONSENSITIVE;
+        }
+#endif
+	pcpu_type_lists = pcpu_chunk_lists[type];
+        BUG_ON(!pcpu_type_lists);
 
 	if (!is_atomic) {
 		/*
@@ -1800,7 +1826,7 @@ static void __percpu *pcpu_alloc(size_t size, size_t align, bool reserved,
 restart:
 	/* search through normal chunks */
 	for (slot = pcpu_size_to_slot(size); slot <= pcpu_free_slot; slot++) {
-		list_for_each_entry_safe(chunk, next, &pcpu_chunk_lists[slot],
+		list_for_each_entry_safe(chunk, next, &pcpu_type_lists[slot],
 					 list) {
 			off = pcpu_find_block_fit(chunk, bits, bit_align,
 						  is_atomic);
@@ -1830,8 +1856,8 @@ restart:
 		goto fail;
 	}
 
-	if (list_empty(&pcpu_chunk_lists[pcpu_free_slot])) {
-		chunk = pcpu_create_chunk(pcpu_gfp);
+	if (list_empty(&pcpu_type_lists[pcpu_free_slot])) {
+		chunk = pcpu_create_chunk(type, pcpu_gfp);
 		if (!chunk) {
 			err = "failed to allocate new chunk";
 			goto fail;
@@ -1983,11 +2009,18 @@ void __percpu *__alloc_reserved_percpu(size_t size, size_t align)
  * CONTEXT:
  * pcpu_lock (can be dropped temporarily)
  */
-static void pcpu_balance_free(bool empty_only)
+
+static void __pcpu_balance_free(bool empty_only,
+                                enum pcpu_chunk_type type)
 {
 	LIST_HEAD(to_free);
-	struct list_head *free_head = &pcpu_chunk_lists[pcpu_free_slot];
+        struct list_head *pcpu_type_lists = pcpu_chunk_lists[type];
+	struct list_head *free_head;
 	struct pcpu_chunk *chunk, *next;
+
+        if (!pcpu_type_lists)
+                  return;
+	free_head = &pcpu_type_lists[pcpu_free_slot];
 
 	lockdep_assert_held(&pcpu_lock);
 
@@ -2026,6 +2059,14 @@ static void pcpu_balance_free(bool empty_only)
 	spin_lock_irq(&pcpu_lock);
 }
 
+static void pcpu_balance_free(bool empty_only)
+{
+        enum pcpu_chunk_type type;
+        for (type = 0; type < PCPU_NR_CHUNK_TYPES; type++) {
+                __pcpu_balance_free(empty_only, type);
+        }
+}
+
 /**
  * pcpu_balance_populated - manage the amount of populated pages
  *
@@ -2038,12 +2079,21 @@ static void pcpu_balance_free(bool empty_only)
  * CONTEXT:
  * pcpu_lock (can be dropped temporarily)
  */
-static void pcpu_balance_populated(void)
+static void __pcpu_balance_populated(enum pcpu_chunk_type type)
 {
 	/* gfp flags passed to underlying allocators */
-	const gfp_t gfp = GFP_KERNEL | __GFP_NORETRY | __GFP_NOWARN;
+        const gfp_t gfp = GFP_KERNEL | __GFP_NORETRY | __GFP_NOWARN
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+              | (type == PCPU_CHUNK_ASI_NONSENSITIVE ?
+                    __GFP_GLOBAL_NONSENSITIVE : 0)
+#endif
+        ;
 	struct pcpu_chunk *chunk;
 	int slot, nr_to_pop, ret;
+	struct list_head *pcpu_type_lists = pcpu_chunk_lists[type];
+
+	if (!pcpu_type_lists)
+		return;
 
 	lockdep_assert_held(&pcpu_lock);
 
@@ -2074,7 +2124,7 @@ retry_pop:
 		if (!nr_to_pop)
 			break;
 
-		list_for_each_entry(chunk, &pcpu_chunk_lists[slot], list) {
+		list_for_each_entry(chunk, &pcpu_type_lists[slot], list) {
 			nr_unpop = chunk->nr_pages - chunk->nr_populated;
 			if (nr_unpop)
 				break;
@@ -2107,7 +2157,7 @@ retry_pop:
 	if (nr_to_pop) {
 		/* ran out of chunks to populate, create a new one and retry */
 		spin_unlock_irq(&pcpu_lock);
-		chunk = pcpu_create_chunk(gfp);
+		chunk = pcpu_create_chunk(type, gfp);
 		cond_resched();
 		spin_lock_irq(&pcpu_lock);
 		if (chunk) {
@@ -2115,6 +2165,14 @@ retry_pop:
 			goto retry_pop;
 		}
 	}
+}
+
+static void pcpu_balance_populated()
+{
+        enum pcpu_chunk_type type;
+
+        for (type = 0; type < PCPU_NR_CHUNK_TYPES; type++)
+                __pcpu_balance_populated(type);
 }
 
 /**
@@ -2132,13 +2190,19 @@ retry_pop:
  * pcpu_lock (can be dropped temporarily)
  *
  */
-static void pcpu_reclaim_populated(void)
+
+
+static void __pcpu_reclaim_populated(enum pcpu_chunk_type type)
 {
 	struct pcpu_chunk *chunk;
 	struct pcpu_block_md *block;
 	int freed_page_start, freed_page_end;
 	int i, end;
 	bool reintegrate;
+        struct list_head *pcpu_type_lists = pcpu_chunk_lists[type];
+
+        if (!pcpu_type_lists)
+                  return;
 
 	lockdep_assert_held(&pcpu_lock);
 
@@ -2148,8 +2212,8 @@ static void pcpu_reclaim_populated(void)
 	 * other accessor is the free path which only returns area back to the
 	 * allocator not touching the populated bitmap.
 	 */
-	while (!list_empty(&pcpu_chunk_lists[pcpu_to_depopulate_slot])) {
-		chunk = list_first_entry(&pcpu_chunk_lists[pcpu_to_depopulate_slot],
+	while (!list_empty(&pcpu_type_lists[pcpu_to_depopulate_slot])) {
+		chunk = list_first_entry(&pcpu_type_lists[pcpu_to_depopulate_slot],
 					 struct pcpu_chunk, list);
 		WARN_ON(chunk->immutable);
 
@@ -2219,8 +2283,16 @@ end_chunk:
 			pcpu_reintegrate_chunk(chunk);
 		else
 			list_move_tail(&chunk->list,
-				       &pcpu_chunk_lists[pcpu_sidelined_slot]);
+				       &pcpu_type_lists[pcpu_sidelined_slot]);
 	}
+}
+
+static void pcpu_reclaim_populated(void)
+{
+        enum pcpu_chunk_type type;
+        for (type = 0; type < PCPU_NR_CHUNK_TYPES; type++) {
+                __pcpu_reclaim_populated(type);
+        }
 }
 
 /**
@@ -2268,6 +2340,7 @@ void free_percpu(void __percpu *ptr)
 	unsigned long flags;
 	int size, off;
 	bool need_balance = false;
+        struct list_head *pcpu_type_lists = NULL;
 
 	if (!ptr)
 		return;
@@ -2280,6 +2353,8 @@ void free_percpu(void __percpu *ptr)
 
 	chunk = pcpu_chunk_addr_search(addr);
 	off = addr - chunk->base_addr;
+        pcpu_type_lists = pcpu_chunk_lists[pcpu_chunk_type(chunk)];
+        BUG_ON(!pcpu_type_lists);
 
 	size = pcpu_free_area(chunk, off);
 
@@ -2293,7 +2368,7 @@ void free_percpu(void __percpu *ptr)
 	if (!chunk->isolated && chunk->free_bytes == pcpu_unit_size) {
 		struct pcpu_chunk *pos;
 
-		list_for_each_entry(pos, &pcpu_chunk_lists[pcpu_free_slot], list)
+		list_for_each_entry(pos, &pcpu_type_lists[pcpu_free_slot], list)
 			if (pos != chunk) {
 				need_balance = true;
 				break;
@@ -2601,6 +2676,7 @@ void __init pcpu_setup_first_chunk(const struct pcpu_alloc_info *ai,
 	int map_size;
 	unsigned long tmp_addr;
 	size_t alloc_size;
+        enum pcpu_chunk_type type;
 
 #define PCPU_SETUP_BUG_ON(cond)	do {					\
 	if (unlikely(cond)) {						\
@@ -2723,15 +2799,24 @@ void __init pcpu_setup_first_chunk(const struct pcpu_alloc_info *ai,
 	pcpu_free_slot = pcpu_sidelined_slot + 1;
 	pcpu_to_depopulate_slot = pcpu_free_slot + 1;
 	pcpu_nr_slots = pcpu_to_depopulate_slot + 1;
-	pcpu_chunk_lists = memblock_alloc(pcpu_nr_slots *
-					  sizeof(pcpu_chunk_lists[0]),
+	for (type = 0; type < PCPU_NR_CHUNK_TYPES; type++) {
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+                if (type == PCPU_CHUNK_ASI_NONSENSITIVE &&
+                    !static_asi_enabled()) {
+                        pcpu_chunk_lists[type] = NULL;
+                        continue;
+                }
+#endif
+	        pcpu_chunk_lists[type] = memblock_alloc(pcpu_nr_slots *
+					  sizeof(pcpu_chunk_lists[0][0]),
 					  SMP_CACHE_BYTES);
-	if (!pcpu_chunk_lists)
-		panic("%s: Failed to allocate %zu bytes\n", __func__,
-		      pcpu_nr_slots * sizeof(pcpu_chunk_lists[0]));
+                if (!pcpu_chunk_lists[type])
+                        panic("%s: Failed to allocate %zu bytes\n", __func__,
+                              pcpu_nr_slots * sizeof(pcpu_chunk_lists[0][0]));
 
-	for (i = 0; i < pcpu_nr_slots; i++)
-		INIT_LIST_HEAD(&pcpu_chunk_lists[i]);
+                for (i = 0; i < pcpu_nr_slots; i++)
+                        INIT_LIST_HEAD(&pcpu_chunk_lists[type][i]);
+        }
 
 	/*
 	 * The end of the static region needs to be aligned with the

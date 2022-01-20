@@ -5,6 +5,15 @@
 #include <linux/types.h>
 #include <linux/percpu.h>
 
+enum pcpu_chunk_type {
+        PCPU_CHUNK_ROOT,
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+        PCPU_CHUNK_ASI_NONSENSITIVE,
+#endif
+        PCPU_NR_CHUNK_TYPES,
+        PCPU_FAIL_ALLOC = PCPU_NR_CHUNK_TYPES
+};
+
 /*
  * pcpu_block_md is the metadata block struct.
  * Each chunk's bitmap is split into a number of full blocks.
@@ -59,6 +68,9 @@ struct pcpu_chunk {
 #ifdef CONFIG_MEMCG_KMEM
 	struct obj_cgroup	**obj_cgroups;	/* vector of object cgroups */
 #endif
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+        bool                    is_asi_nonsensitive; /* ASI nonsensitive chunk */
+#endif
 
 	int			nr_pages;	/* # of pages served by this chunk */
 	int			nr_populated;	/* # of populated pages */
@@ -68,7 +80,7 @@ struct pcpu_chunk {
 
 extern spinlock_t pcpu_lock;
 
-extern struct list_head *pcpu_chunk_lists;
+extern struct list_head *pcpu_chunk_lists[PCPU_NR_CHUNK_TYPES];
 extern int pcpu_nr_slots;
 extern int pcpu_sidelined_slot;
 extern int pcpu_to_depopulate_slot;
@@ -111,6 +123,15 @@ static inline int pcpu_nr_pages_to_map_bits(int pages)
 static inline int pcpu_chunk_map_bits(struct pcpu_chunk *chunk)
 {
 	return pcpu_nr_pages_to_map_bits(chunk->nr_pages);
+}
+
+static inline enum pcpu_chunk_type pcpu_chunk_type(struct pcpu_chunk *chunk)
+{
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+        if (chunk->is_asi_nonsensitive)
+                return PCPU_CHUNK_ASI_NONSENSITIVE;
+#endif
+        return PCPU_CHUNK_ROOT;
 }
 
 #ifdef CONFIG_PERCPU_STATS
