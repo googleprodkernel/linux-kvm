@@ -36,7 +36,7 @@
 #include <asm/tlbflush.h>
 
 /* Per cpu debug control register value */
-DEFINE_PER_CPU(unsigned long, cpu_dr7);
+DEFINE_PER_CPU_ASI_NOT_SENSITIVE(unsigned long, cpu_dr7);
 EXPORT_PER_CPU_SYMBOL(cpu_dr7);
 
 /* Per cpu debug address registers values */

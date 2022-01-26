@@ -46,7 +46,7 @@
  * (these are usually mapped into the 0x30-0xff vector range)
  */
 
-DEFINE_PER_CPU(vector_irq_t, vector_irq) = {
+DEFINE_PER_CPU_ASI_NOT_SENSITIVE(vector_irq_t, vector_irq) = {
 	[0 ... NR_VECTORS - 1] = VECTOR_UNUSED,
 };
 

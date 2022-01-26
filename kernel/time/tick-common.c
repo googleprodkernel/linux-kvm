@@ -25,7 +25,7 @@
 /*
  * Tick devices
  */
-DEFINE_PER_CPU(struct tick_device, tick_cpu_device);
+DEFINE_PER_CPU_ASI_NOT_SENSITIVE(struct tick_device, tick_cpu_device);
 /*
  * Tick next event: keeps track of the tick time. It's updated by the
  * CPU which handles the tick and protected by jiffies_lock. There is

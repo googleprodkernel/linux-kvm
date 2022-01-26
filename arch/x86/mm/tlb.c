@@ -972,7 +972,7 @@ static bool tlb_is_not_lazy(int cpu)
 
 static DEFINE_PER_CPU(cpumask_t, flush_tlb_mask);
 
-DEFINE_PER_CPU_SHARED_ALIGNED(struct tlb_state_shared, cpu_tlbstate_shared);
+DEFINE_PER_CPU_SHARED_ALIGNED_ASI_NOT_SENSITIVE(struct tlb_state_shared, cpu_tlbstate_shared);
 EXPORT_PER_CPU_SYMBOL(cpu_tlbstate_shared);
 
 STATIC_NOPV void native_flush_tlb_multi(const struct cpumask *cpumask,

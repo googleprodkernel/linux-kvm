@@ -298,7 +298,7 @@ static inline void native_load_tls(struct thread_struct *t, unsigned int cpu)
 		gdt[GDT_ENTRY_TLS_MIN + i] = t->tls_array[i];
 }
 
-DECLARE_PER_CPU(bool, __tss_limit_invalid);
+DECLARE_PER_CPU_ASI_NOT_SENSITIVE(bool, __tss_limit_invalid);
 
 static inline void force_reload_TR(void)
 {

@@ -1036,7 +1036,7 @@ static inline bool x86_pmu_has_lbr_callstack(void)
 		x86_pmu.lbr_sel_map[PERF_SAMPLE_BRANCH_CALL_STACK_SHIFT] > 0;
 }
 
-DECLARE_PER_CPU(struct cpu_hw_events, cpu_hw_events);
+DECLARE_PER_CPU_ASI_NOT_SENSITIVE(struct cpu_hw_events, cpu_hw_events);
 
 int x86_perf_event_set_period(struct perf_event *event);
 

@@ -17,7 +17,7 @@
  * task when irq is in progress while we read rq->clock. That is a worthy
  * compromise in place of having locks on each irq in account_system_time.
  */
-DEFINE_PER_CPU(struct irqtime, cpu_irqtime);
+DEFINE_PER_CPU_ASI_NOT_SENSITIVE(struct irqtime, cpu_irqtime);
 
 static int __asi_not_sensitive sched_clock_irqtime;
 

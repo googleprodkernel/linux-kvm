@@ -47,7 +47,7 @@
 struct x86_pmu x86_pmu __asi_not_sensitive_readmostly;
 static struct pmu pmu;
 
-DEFINE_PER_CPU(struct cpu_hw_events, cpu_hw_events) = {
+DEFINE_PER_CPU_ASI_NOT_SENSITIVE(struct cpu_hw_events, cpu_hw_events) = {
 	.enabled = 1,
 	.pmu = &pmu,
 };

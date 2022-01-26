@@ -14,7 +14,7 @@
  * Per-cpu current frame pointer - the location of the last exception frame on
  * the stack
  */
-DECLARE_PER_CPU(struct pt_regs *, __irq_regs);
+DECLARE_PER_CPU_ASI_NOT_SENSITIVE(struct pt_regs *, __irq_regs);
 
 static inline struct pt_regs *get_irq_regs(void)
 {

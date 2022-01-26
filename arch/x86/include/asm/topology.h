@@ -203,7 +203,7 @@ DECLARE_STATIC_KEY_FALSE(arch_scale_freq_key);
 
 #define arch_scale_freq_invariant() static_branch_likely(&arch_scale_freq_key)
 
-DECLARE_PER_CPU(unsigned long, arch_freq_scale);
+DECLARE_PER_CPU_ASI_NOT_SENSITIVE(unsigned long, arch_freq_scale);
 
 static inline long arch_scale_freq_capacity(int cpu)
 {

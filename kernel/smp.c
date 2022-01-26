@@ -92,9 +92,10 @@ struct call_function_data {
 	cpumask_var_t		cpumask_ipi;
 };
 
-static DEFINE_PER_CPU_ALIGNED(struct call_function_data, cfd_data);
+static DEFINE_PER_CPU_ALIGNED_ASI_NOT_SENSITIVE(struct call_function_data, cfd_data);
 
-static DEFINE_PER_CPU_SHARED_ALIGNED(struct llist_head, call_single_queue);
+static DEFINE_PER_CPU_SHARED_ALIGNED_ASI_NOT_SENSITIVE(struct llist_head,
+                                                       call_single_queue);
 
 static void flush_smp_call_function_queue(bool warn_cpu_offline);
 
@@ -464,7 +465,7 @@ static __always_inline void csd_unlock(struct __call_single_data *csd)
 	smp_store_release(&csd->node.u_flags, 0);
 }
 
-static DEFINE_PER_CPU_SHARED_ALIGNED(call_single_data_t, csd_data);
+static DEFINE_PER_CPU_SHARED_ALIGNED_ASI_NOT_SENSITIVE(call_single_data_t, csd_data);
 
 void __smp_call_single_queue(int cpu, struct llist_node *node)
 {

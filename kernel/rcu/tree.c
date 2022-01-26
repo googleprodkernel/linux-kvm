@@ -74,7 +74,7 @@
 
 /* Data structures. */
 
-static DEFINE_PER_CPU_SHARED_ALIGNED(struct rcu_data, rcu_data) = {
+static DEFINE_PER_CPU_SHARED_ALIGNED_ASI_NOT_SENSITIVE(struct rcu_data, rcu_data) = {
 	.dynticks_nesting = 1,
 	.dynticks_nmi_nesting = DYNTICK_IRQ_NONIDLE,
 	.dynticks = ATOMIC_INIT(1),

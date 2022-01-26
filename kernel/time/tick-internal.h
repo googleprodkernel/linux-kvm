@@ -13,7 +13,7 @@
 # define TICK_DO_TIMER_NONE	-1
 # define TICK_DO_TIMER_BOOT	-2
 
-DECLARE_PER_CPU(struct tick_device, tick_cpu_device);
+DECLARE_PER_CPU_ASI_NOT_SENSITIVE(struct tick_device, tick_cpu_device);
 extern ktime_t tick_next_period;
 extern int tick_do_timer_cpu;
 
@@ -161,7 +161,7 @@ static inline void timers_update_nohz(void) { }
 #define tick_nohz_active (0)
 #endif
 
-DECLARE_PER_CPU(struct hrtimer_cpu_base, hrtimer_bases);
+DECLARE_PER_CPU_ASI_NOT_SENSITIVE(struct hrtimer_cpu_base, hrtimer_bases);
 
 extern u64 get_next_timer_interrupt(unsigned long basej, u64 basem);
 void timer_clear_idle(void);

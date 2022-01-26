@@ -40,8 +40,8 @@ struct kernel_stat {
 	unsigned int softirqs[NR_SOFTIRQS];
 };
 
-DECLARE_PER_CPU(struct kernel_stat, kstat);
-DECLARE_PER_CPU(struct kernel_cpustat, kernel_cpustat);
+DECLARE_PER_CPU_ASI_NOT_SENSITIVE(struct kernel_stat, kstat);
+DECLARE_PER_CPU_ASI_NOT_SENSITIVE(struct kernel_cpustat, kernel_cpustat);
 
 /* Must have preemption disabled for this to be meaningful. */
 #define kstat_this_cpu this_cpu_ptr(&kstat)

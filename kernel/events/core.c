@@ -1207,7 +1207,7 @@ void perf_pmu_enable(struct pmu *pmu)
 		pmu->pmu_enable(pmu);
 }
 
-static DEFINE_PER_CPU(struct list_head, active_ctx_list);
+static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(struct list_head, active_ctx_list);
 
 /*
  * perf_event_ctx_activate(), perf_event_ctx_deactivate(), and
@@ -4007,8 +4007,8 @@ do {					\
 	return div64_u64(dividend, divisor);
 }
 
-static DEFINE_PER_CPU(int, perf_throttled_count);
-static DEFINE_PER_CPU(u64, perf_throttled_seq);
+static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(int, perf_throttled_count);
+static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(u64, perf_throttled_seq);
 
 static void perf_adjust_period(struct perf_event *event, u64 nsec, u64 count, bool disable)
 {

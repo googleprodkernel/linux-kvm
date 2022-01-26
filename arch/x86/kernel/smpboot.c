@@ -2224,7 +2224,8 @@ static void disable_freq_invariance_workfn(struct work_struct *work)
 static DECLARE_WORK(disable_freq_invariance_work,
 		    disable_freq_invariance_workfn);
 
-DEFINE_PER_CPU(unsigned long, arch_freq_scale) = SCHED_CAPACITY_SCALE;
+DEFINE_PER_CPU_ASI_NOT_SENSITIVE(unsigned long, arch_freq_scale) =
+                                                        SCHED_CAPACITY_SCALE;
 
 void arch_scale_freq_tick(void)
 {

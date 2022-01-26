@@ -121,7 +121,7 @@ static inline void fpstate_init_soft(struct swregs_state *soft) {}
 #endif
 
 /* State tracking */
-DECLARE_PER_CPU(struct fpu *, fpu_fpregs_owner_ctx);
+DECLARE_PER_CPU_ASI_NOT_SENSITIVE(struct fpu *, fpu_fpregs_owner_ctx);
 
 /* Process cleanup */
 #ifdef CONFIG_X86_64

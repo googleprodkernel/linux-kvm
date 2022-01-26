@@ -212,7 +212,7 @@ struct timer_base {
 	struct hlist_head	vectors[WHEEL_SIZE];
 } ____cacheline_aligned;
 
-static DEFINE_PER_CPU(struct timer_base, timer_bases[NR_BASES]);
+static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(struct timer_base, timer_bases[NR_BASES]);
 
 #ifdef CONFIG_NO_HZ_COMMON
 

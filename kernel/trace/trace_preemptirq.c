@@ -17,7 +17,7 @@
 
 #ifdef CONFIG_TRACE_IRQFLAGS
 /* Per-cpu variable to prevent redundant calls when IRQs already off */
-static DEFINE_PER_CPU(int, tracing_irq_cpu);
+static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(int, tracing_irq_cpu);
 
 /*
  * Like trace_hardirqs_on() but without the lockdep invocation. This is

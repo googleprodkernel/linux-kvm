@@ -7,7 +7,7 @@
 #include <linux/thread_info.h>
 #include <linux/static_call_types.h>
 
-DECLARE_PER_CPU(int, __preempt_count);
+DECLARE_PER_CPU_ASI_NOT_SENSITIVE(int, __preempt_count);
 
 /* We use the MSB mostly because its available */
 #define PREEMPT_NEED_RESCHED	0x80000000

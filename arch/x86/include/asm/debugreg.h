@@ -6,7 +6,7 @@
 #include <linux/bug.h>
 #include <uapi/asm/debugreg.h>
 
-DECLARE_PER_CPU(unsigned long, cpu_dr7);
+DECLARE_PER_CPU_ASI_NOT_SENSITIVE(unsigned long, cpu_dr7);
 
 #ifndef CONFIG_PARAVIRT_XXL
 /*

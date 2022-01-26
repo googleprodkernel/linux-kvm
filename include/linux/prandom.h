@@ -16,7 +16,7 @@ void prandom_bytes(void *buf, size_t nbytes);
 void prandom_seed(u32 seed);
 void prandom_reseed_late(void);
 
-DECLARE_PER_CPU(unsigned long, net_rand_noise);
+DECLARE_PER_CPU_ASI_NOT_SENSITIVE(unsigned long, net_rand_noise);
 
 #define PRANDOM_ADD_NOISE(a, b, c, d) \
 	prandom_u32_add_noise((unsigned long)(a), (unsigned long)(b), \

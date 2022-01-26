@@ -151,7 +151,7 @@ struct tlb_state {
 	 */
 	struct tlb_context ctxs[TLB_NR_DYN_ASIDS];
 };
-DECLARE_PER_CPU_ALIGNED(struct tlb_state, cpu_tlbstate);
+DECLARE_PER_CPU_SHARED_ALIGNED_ASI_NOT_SENSITIVE(struct tlb_state, cpu_tlbstate);
 
 struct tlb_state_shared {
 	/*
@@ -171,7 +171,7 @@ struct tlb_state_shared {
 	 */
 	bool is_lazy;
 };
-DECLARE_PER_CPU_SHARED_ALIGNED(struct tlb_state_shared, cpu_tlbstate_shared);
+DECLARE_PER_CPU_SHARED_ALIGNED_ASI_NOT_SENSITIVE(struct tlb_state_shared, cpu_tlbstate_shared);
 
 bool nmi_uaccess_okay(void);
 #define nmi_uaccess_okay nmi_uaccess_okay

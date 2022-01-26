@@ -59,7 +59,7 @@ struct cyc2ns {
 
 }; /* fits one cacheline */
 
-static DEFINE_PER_CPU_ALIGNED(struct cyc2ns, cyc2ns);
+static DEFINE_PER_CPU_ALIGNED_ASI_NOT_SENSITIVE(struct cyc2ns, cyc2ns);
 
 static int __init tsc_early_khz_setup(char *buf)
 {

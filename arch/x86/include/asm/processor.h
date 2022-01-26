@@ -417,14 +417,14 @@ struct tss_struct {
 	struct x86_io_bitmap	io_bitmap;
 } __aligned(PAGE_SIZE);
 
-DECLARE_PER_CPU_PAGE_ALIGNED(struct tss_struct, cpu_tss_rw);
+DECLARE_PER_CPU_PAGE_ALIGNED_ASI_NOT_SENSITIVE(struct tss_struct, cpu_tss_rw);
 
 /* Per CPU interrupt stacks */
 struct irq_stack {
 	char		stack[IRQ_STACK_SIZE];
 } __aligned(IRQ_STACK_SIZE);
 
-DECLARE_PER_CPU(unsigned long, cpu_current_top_of_stack);
+DECLARE_PER_CPU_ASI_NOT_SENSITIVE(unsigned long, cpu_current_top_of_stack);
 
 #ifdef CONFIG_X86_64
 struct fixed_percpu_data {
@@ -448,8 +448,8 @@ static inline unsigned long cpu_kernelmode_gs_base(int cpu)
 	return (unsigned long)per_cpu(fixed_percpu_data.gs_base, cpu);
 }
 
-DECLARE_PER_CPU(void *, hardirq_stack_ptr);
-DECLARE_PER_CPU(bool, hardirq_stack_inuse);
+DECLARE_PER_CPU_ASI_NOT_SENSITIVE(void *, hardirq_stack_ptr);
+DECLARE_PER_CPU_ASI_NOT_SENSITIVE(bool, hardirq_stack_inuse);
 extern asmlinkage void ignore_sysret(void);
 
 /* Save actual FS/GS selectors and bases to current->thread */
@@ -458,8 +458,8 @@ void current_save_fsgs(void);
 #ifdef CONFIG_STACKPROTECTOR
 DECLARE_PER_CPU(unsigned long, __stack_chk_guard);
 #endif
-DECLARE_PER_CPU(struct irq_stack *, hardirq_stack_ptr);
-DECLARE_PER_CPU(struct irq_stack *, softirq_stack_ptr);
+DECLARE_PER_CPU_ASI_NOT_SENSITIVE(struct irq_stack *, hardirq_stack_ptr);
+DECLARE_PER_CPU_ASI_NOT_SENSITIVE(struct irq_stack *, softirq_stack_ptr);
 #endif	/* !X86_64 */
 
 struct perf_event;

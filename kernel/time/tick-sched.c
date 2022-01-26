@@ -36,7 +36,7 @@
 /*
  * Per-CPU nohz control structure
  */
-static DEFINE_PER_CPU(struct tick_sched, tick_cpu_sched);
+static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(struct tick_sched, tick_cpu_sched);
 
 struct tick_sched *tick_get_tick_sched(int cpu)
 {

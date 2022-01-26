@@ -9,7 +9,8 @@
 
 #include "sched.h"
 
-DEFINE_PER_CPU(struct update_util_data __rcu *, cpufreq_update_util_data);
+DEFINE_PER_CPU_ASI_NOT_SENSITIVE(struct update_util_data __rcu *,
+                                 cpufreq_update_util_data);
 
 /**
  * cpufreq_add_update_util_hook - Populate the CPU's update_util_data pointer.

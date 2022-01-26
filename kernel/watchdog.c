@@ -174,13 +174,13 @@ static bool softlockup_initialized __read_mostly;
 static u64 __read_mostly sample_period;
 
 /* Timestamp taken after the last successful reschedule. */
-static DEFINE_PER_CPU(unsigned long, watchdog_touch_ts);
+static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(unsigned long, watchdog_touch_ts);
 /* Timestamp of the last softlockup report. */
-static DEFINE_PER_CPU(unsigned long, watchdog_report_ts);
-static DEFINE_PER_CPU(struct hrtimer, watchdog_hrtimer);
-static DEFINE_PER_CPU(bool, softlockup_touch_sync);
-static DEFINE_PER_CPU(unsigned long, hrtimer_interrupts);
-static DEFINE_PER_CPU(unsigned long, hrtimer_interrupts_saved);
+static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(unsigned long, watchdog_report_ts);
+static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(struct hrtimer, watchdog_hrtimer);
+static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(bool, softlockup_touch_sync);
+static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(unsigned long, hrtimer_interrupts);
+static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(unsigned long, hrtimer_interrupts_saved);
 static unsigned long soft_lockup_nmi_warn;
 
 static int __init nowatchdog_setup(char *str)

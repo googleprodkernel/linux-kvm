@@ -355,7 +355,7 @@ static inline void timerfd_clock_was_set(void) { }
 static inline void timerfd_resume(void) { }
 #endif
 
-DECLARE_PER_CPU(struct tick_device, tick_cpu_device);
+DECLARE_PER_CPU_ASI_NOT_SENSITIVE(struct tick_device, tick_cpu_device);
 
 #ifdef CONFIG_PREEMPT_RT
 void hrtimer_cancel_wait_running(const struct hrtimer *timer);

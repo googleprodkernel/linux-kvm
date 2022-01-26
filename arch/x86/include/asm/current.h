@@ -8,7 +8,7 @@
 #ifndef __ASSEMBLY__
 struct task_struct;
 
-DECLARE_PER_CPU(struct task_struct *, current_task);
+DECLARE_PER_CPU_ASI_NOT_SENSITIVE(struct task_struct *, current_task);
 
 static __always_inline struct task_struct *get_current(void)
 {

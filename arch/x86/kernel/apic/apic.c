@@ -548,7 +548,7 @@ static struct clock_event_device lapic_clockevent = {
 	.rating				= 100,
 	.irq				= -1,
 };
-static DEFINE_PER_CPU(struct clock_event_device, lapic_events);
+static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(struct clock_event_device, lapic_events);
 
 static const struct x86_cpu_id deadline_match[] __initconst = {
 	X86_MATCH_INTEL_FAM6_MODEL_STEPPINGS(HASWELL_X, X86_STEPPINGS(0x2, 0x2), 0x3a), /* EP */

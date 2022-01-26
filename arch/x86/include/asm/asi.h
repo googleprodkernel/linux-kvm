@@ -52,7 +52,7 @@ struct asi_pgtbl_pool {
 	uint count;
 };
 
-DECLARE_PER_CPU_ALIGNED(struct asi_state, asi_cpu_state);
+DECLARE_PER_CPU_ALIGNED_ASI_NOT_SENSITIVE(struct asi_state, asi_cpu_state);
 
 extern pgd_t asi_global_nonsensitive_pgd[];
 

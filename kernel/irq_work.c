@@ -22,9 +22,9 @@
 #include <asm/processor.h>
 #include <linux/kasan.h>
 
-static DEFINE_PER_CPU(struct llist_head, raised_list);
-static DEFINE_PER_CPU(struct llist_head, lazy_list);
-static DEFINE_PER_CPU(struct task_struct *, irq_workd);
+static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(struct llist_head, raised_list);
+static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(struct llist_head, lazy_list);
+static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(struct task_struct *, irq_workd);
 
 static void wake_irq_workd(void)
 {

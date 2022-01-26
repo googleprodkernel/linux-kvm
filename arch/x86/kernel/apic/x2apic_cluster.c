@@ -20,10 +20,10 @@ struct cluster_mask {
  * x86_cpu_to_logical_apicid for all online cpus in a sequential way.
  * Using per cpu variable would cost one cache line per cpu.
  */
-static u32 *x86_cpu_to_logical_apicid __read_mostly;
+static u32 *x86_cpu_to_logical_apicid __asi_not_sensitive_readmostly;
 
-static DEFINE_PER_CPU(cpumask_var_t, ipi_mask);
-static DEFINE_PER_CPU_READ_MOSTLY(struct cluster_mask *, cluster_masks);
+static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(cpumask_var_t, ipi_mask);
+static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(struct cluster_mask *, cluster_masks);
 static struct cluster_mask *cluster_hotplug_mask;
 
 static int x2apic_acpi_madt_oem_check(char *oem_id, char *oem_table_id)

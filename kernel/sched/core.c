@@ -43,7 +43,7 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(sched_util_est_cfs_tp);
 EXPORT_TRACEPOINT_SYMBOL_GPL(sched_util_est_se_tp);
 EXPORT_TRACEPOINT_SYMBOL_GPL(sched_update_nr_running_tp);
 
-DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
+DEFINE_PER_CPU_SHARED_ALIGNED_ASI_NOT_SENSITIVE(struct rq, runqueues);
 
 #ifdef CONFIG_SCHED_DEBUG
 /*
@@ -5104,8 +5104,8 @@ unlock:
 
 #endif
 
-DEFINE_PER_CPU(struct kernel_stat, kstat);
-DEFINE_PER_CPU(struct kernel_cpustat, kernel_cpustat);
+DEFINE_PER_CPU_ASI_NOT_SENSITIVE(struct kernel_stat, kstat);
+DEFINE_PER_CPU_ASI_NOT_SENSITIVE(struct kernel_cpustat, kernel_cpustat);
 
 EXPORT_PER_CPU_SYMBOL(kstat);
 EXPORT_PER_CPU_SYMBOL(kernel_cpustat);
