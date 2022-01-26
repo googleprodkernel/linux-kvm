@@ -169,6 +169,10 @@ struct pcpu_chunk *pcpu_first_chunk __ro_after_init;
  */
 struct pcpu_chunk *pcpu_reserved_chunk __ro_after_init;
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+struct pcpu_chunk *pcpu_reserved_nonsensitive_chunk __ro_after_init;
+#endif
+
 DEFINE_SPINLOCK(pcpu_lock);	/* all internal data structures */
 static DEFINE_MUTEX(pcpu_alloc_mutex);	/* chunk create/destroy, [de]pop, map ext */
 
@@ -1621,6 +1625,11 @@ static struct pcpu_chunk *pcpu_chunk_addr_search(void *addr)
 	if (pcpu_addr_in_chunk(pcpu_first_chunk, addr))
 		return pcpu_first_chunk;
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	/* is it in the reserved ASI region? */
+	if (pcpu_addr_in_chunk(pcpu_reserved_nonsensitive_chunk, addr))
+		return pcpu_reserved_nonsensitive_chunk;
+#endif
 	/* is it in the reserved region? */
 	if (pcpu_addr_in_chunk(pcpu_reserved_chunk, addr))
 		return pcpu_reserved_chunk;
@@ -1805,23 +1814,37 @@ static void __percpu *pcpu_alloc(size_t size, size_t align, bool reserved,
 
 	spin_lock_irqsave(&pcpu_lock, flags);
 
+#define TRY_ALLOC_FROM_CHUNK(source_chunk, chunk_name)                  \
+do {                                                                    \
+        if (!source_chunk) {                                            \
+                err = chunk_name " chunk not allocated";                \
+                goto fail_unlock;                                       \
+        }                                                               \
+        chunk = source_chunk;                                           \
+                                                                        \
+        off = pcpu_find_block_fit(chunk, bits, bit_align, is_atomic);   \
+        if (off < 0) {                                                  \
+                err = "alloc from " chunk_name " chunk failed";         \
+                goto fail_unlock;                                       \
+        }                                                               \
+                                                                        \
+        off = pcpu_alloc_area(chunk, bits, bit_align, off);             \
+        if (off >= 0)                                                   \
+                goto area_found;                                        \
+                                                                        \
+        err = "alloc from " chunk_name " chunk failed";                 \
+        goto fail_unlock;                                               \
+} while(0)
+
 	/* serve reserved allocations from the reserved chunk if available */
-	if (reserved && pcpu_reserved_chunk) {
-		chunk = pcpu_reserved_chunk;
-
-		off = pcpu_find_block_fit(chunk, bits, bit_align, is_atomic);
-		if (off < 0) {
-			err = "alloc from reserved chunk failed";
-			goto fail_unlock;
-		}
-
-		off = pcpu_alloc_area(chunk, bits, bit_align, off);
-		if (off >= 0)
-			goto area_found;
-
-		err = "alloc from reserved chunk failed";
-		goto fail_unlock;
-	}
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+        if (reserved && (gfp & __GFP_GLOBAL_NONSENSITIVE))
+                TRY_ALLOC_FROM_CHUNK(pcpu_reserved_nonsensitive_chunk,
+                                     "reserverved ASI");
+	else
+#endif
+        if (reserved && pcpu_reserved_chunk)
+                TRY_ALLOC_FROM_CHUNK(pcpu_reserved_chunk, "reserved");
 
 restart:
 	/* search through normal chunks */
@@ -1997,6 +2020,14 @@ void __percpu *__alloc_reserved_percpu(size_t size, size_t align)
 {
 	return pcpu_alloc(size, align, true, GFP_KERNEL);
 }
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+void __percpu *__alloc_reserved_percpu_asi(size_t size, size_t align)
+{
+       return pcpu_alloc(size, align, true,
+                          GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE);
+}
+#endif
 
 /**
  * pcpu_balance_free - manage the amount of free chunks
@@ -2838,15 +2869,46 @@ void __init pcpu_setup_first_chunk(const struct pcpu_alloc_info *ai,
 	 * the dynamic region.
 	 */
 	tmp_addr = (unsigned long)base_addr + static_size;
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+        /* If ASI is used, split the reserved size between the nonsensitive
+         * chunk and the normal chunk evenly. */
+	map_size = (ai->reserved_size / 2) ?: dyn_size;
+#else
 	map_size = ai->reserved_size ?: dyn_size;
+#endif
 	chunk = pcpu_alloc_first_chunk(tmp_addr, map_size);
 
 	/* init dynamic chunk if necessary */
 	if (ai->reserved_size) {
-		pcpu_reserved_chunk = chunk;
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+          /* TODO: check if ASI was enabled via boot param or static branch */
+          /* We allocated pcpu_reserved_nonsensitive_chunk only if
+           * pcpu_reserved_chunk is used as well. */
+		pcpu_reserved_nonsensitive_chunk = chunk;
+                pcpu_reserved_nonsensitive_chunk->is_asi_nonsensitive = true;
 
+                /* We used the previous chunk as pcpu_reserved_nonsensitive_chunk. Now
+                 * allocate pcpu_reserved_chunk */
+		tmp_addr = (unsigned long)base_addr + static_size +
+			   (ai->reserved_size / 2);
+		map_size = ai->reserved_size / 2;
+                chunk = pcpu_alloc_first_chunk(tmp_addr, map_size);
+#endif
+                /* Whether ASI is enabled or disabled, the end result is the
+                 * same:
+                 * If ASI is enabled, tmp_addr, used for pcpu_first_chunk should
+                 * be after
+                 * 1. pcpu_reserved_nonsensitive_chunk AND
+                 * 2. pcpu_reserved_chunk
+                 * Since we split the reserve size in half, we skip in total the
+                 * whole ai->reserved_size.
+                 * If ASI is disabled, tmp_addr, used for pcpu_first_chunk is
+                 * just after pcpu_reserved_chunk */
 		tmp_addr = (unsigned long)base_addr + static_size +
 			   ai->reserved_size;
+
+                pcpu_reserved_chunk = chunk;
+
 		map_size = dyn_size;
 		chunk = pcpu_alloc_first_chunk(tmp_addr, map_size);
 	}
@@ -3129,7 +3191,6 @@ int __init pcpu_embed_first_chunk(size_t reserved_size, size_t dyn_size,
 				   cpu_distance_fn);
 	if (IS_ERR(ai))
 		return PTR_ERR(ai);
-
 	size_sum = ai->static_size + ai->reserved_size + ai->dyn_size;
 	areas_size = PFN_ALIGN(ai->nr_groups * sizeof(void *));
 
@@ -3460,3 +3521,40 @@ static int __init percpu_enable_async(void)
 	return 0;
 }
 subsys_initcall(percpu_enable_async);
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+void __init pcpu_map_asi_reserved_chunk(void)
+{
+        void *start_addr, *end_addr;
+        unsigned long map_start_addr, map_end_addr;
+        struct pcpu_chunk *chunk = pcpu_reserved_nonsensitive_chunk;
+        int err = 0;
+
+        if (!chunk)
+		return;
+
+	start_addr = chunk->base_addr + chunk->start_offset;
+	end_addr = chunk->base_addr + chunk->nr_pages * PAGE_SIZE -
+		   chunk->end_offset;
+
+
+        /* No need in asi_map_percpu, since these addresses are "real". The
+         * chunk has full pages allocated, so we're not worried about leakage of
+         * data caused by start_addr-->end_addr not being page aligned. asi_map,
+         * however, will fail/crash if the addresses are not aligned. */
+        map_start_addr = (unsigned long)start_addr & PAGE_MASK;
+        map_end_addr = PAGE_ALIGN((unsigned long)end_addr);
+
+        pr_err("%s:%d mapping 0x%lx --> 0x%lx",
+               __FUNCTION__, __LINE__, map_start_addr, map_end_addr);
+        err = asi_map(ASI_GLOBAL_NONSENSITIVE,
+                      (void*)map_start_addr, map_end_addr - map_start_addr);
+
+        WARN(err, "Failed mapping percpu reserved chunk into ASI");
+
+        /* If we couldn't map the chuknk into ASI, it is useless. Set the chunk
+         * to NULL, so allocations from it will fail. */
+        if (err)
+              pcpu_reserved_nonsensitive_chunk = NULL;
+}
+#endif

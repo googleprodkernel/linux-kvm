@@ -50,6 +50,12 @@ extern void setup_per_cpu_areas(void);
 
 #endif	/* SMP */
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+void __init pcpu_map_asi_reserved_chunk(void);
+#else
+static inline void pcpu_map_asi_reserved_chunk(void) {}
+#endif
+
 #ifndef PER_CPU_BASE_SECTION
 #ifdef CONFIG_SMP
 #define PER_CPU_BASE_SECTION ".data..percpu"

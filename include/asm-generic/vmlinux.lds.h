@@ -1080,6 +1080,11 @@
 	. = ALIGN(cacheline);						\
 	*(.data..percpu)						\
 	*(.data..percpu..shared_aligned)				\
+        . = ALIGN(PAGE_SIZE);                                           \
+        __per_cpu_asi_start = .;                                        \
+        *(.data..percpu..asi_non_sensitive)                             \
+        . = ALIGN(PAGE_SIZE);                                           \
+        __per_cpu_asi_end = .;                                          \
 	PERCPU_DECRYPTED_SECTION					\
 	__per_cpu_end = .;
 

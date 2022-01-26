@@ -587,6 +587,13 @@ static inline void __percpu *mod_percpu(struct module *mod)
 	return mod->percpu;
 }
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+static inline void __percpu *mod_percpu_asi(struct module *mod)
+{
+	return mod->percpu_asi;
+}
+#endif
+
 static int percpu_modalloc(struct module *mod, struct load_info *info)
 {
 	Elf_Shdr *pcpusec = &info->sechdrs[info->index.pcpu];
@@ -611,15 +618,47 @@ static int percpu_modalloc(struct module *mod, struct load_info *info)
 	return 0;
 }
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+static int percpu_asi_modalloc(struct module *mod, struct load_info *info)
+{
+	Elf_Shdr *pcpusec = &info->sechdrs[info->index.pcpu_asi];
+	unsigned long align = pcpusec->sh_addralign;
+
+	if ( !pcpusec->sh_size)
+		return 0;
+
+	mod->percpu_asi = __alloc_reserved_percpu_asi(pcpusec->sh_size, align);
+	if (!mod->percpu_asi) {
+		pr_warn("%s: Could not allocate %lu bytes percpu data\n",
+			mod->name, (unsigned long)pcpusec->sh_size);
+		return -ENOMEM;
+	}
+	mod->percpu_asi_size = pcpusec->sh_size;
+
+	return 0;
+}
+#endif
+
 static void percpu_modfree(struct module *mod)
 {
 	free_percpu(mod->percpu);
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	free_percpu(mod->percpu_asi);
+#endif
 }
 
 static unsigned int find_pcpusec(struct load_info *info)
 {
 	return find_sec(info, ".data..percpu");
 }
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+static unsigned int find_pcpusec_asi(struct load_info *info)
+{
+	return find_sec(info, ".data..percpu" ASI_PERCPU_SECTION );
+}
+#endif
 
 static void percpu_modcopy(struct module *mod,
 			   const void *from, unsigned long size)
@@ -628,6 +667,39 @@ static void percpu_modcopy(struct module *mod,
 
 	for_each_possible_cpu(cpu)
 		memcpy(per_cpu_ptr(mod->percpu, cpu), from, size);
+}
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+static void percpu_asi_modcopy(struct module *mod,
+			   const void *from, unsigned long size)
+{
+	int cpu;
+
+	for_each_possible_cpu(cpu)
+		memcpy(per_cpu_ptr(mod->percpu_asi, cpu), from, size);
+}
+#endif
+
+bool __is_module_percpu_address_helper(unsigned long addr,
+                                       unsigned long *can_addr,
+                                       unsigned int cpu,
+                                       void* percpu_start,
+                                       unsigned int percpu_size)
+{
+        void *start = per_cpu_ptr(percpu_start, cpu);
+        void *va = (void *)addr;
+
+        if (va >= start && va < start + percpu_size) {
+                if (can_addr) {
+                        *can_addr = (unsigned long) (va - start);
+                        *can_addr += (unsigned long)
+                                per_cpu_ptr(percpu_start,
+                                            get_boot_cpu_id());
+                }
+                return true;
+        }
+
+        return false;
 }
 
 bool __is_module_percpu_address(unsigned long addr, unsigned long *can_addr)
@@ -640,22 +712,34 @@ bool __is_module_percpu_address(unsigned long addr, unsigned long *can_addr)
 	list_for_each_entry_rcu(mod, &modules, list) {
 		if (mod->state == MODULE_STATE_UNFORMED)
 			continue;
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+		if (!mod->percpu_size && !mod->percpu_asi_size)
+			continue;
+#else
 		if (!mod->percpu_size)
 			continue;
+#endif
 		for_each_possible_cpu(cpu) {
-			void *start = per_cpu_ptr(mod->percpu, cpu);
-			void *va = (void *)addr;
-
-			if (va >= start && va < start + mod->percpu_size) {
-				if (can_addr) {
-					*can_addr = (unsigned long) (va - start);
-					*can_addr += (unsigned long)
-						per_cpu_ptr(mod->percpu,
-							    get_boot_cpu_id());
-				}
+                        if (__is_module_percpu_address_helper(addr,
+                                                              can_addr,
+                                                              cpu,
+                                                              mod->percpu,
+                                                              mod->percpu_size)) {
 				preempt_enable();
 				return true;
-			}
+                        }
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+                        if (__is_module_percpu_address_helper(
+                                                        addr,
+                                                        can_addr,
+                                                        cpu,
+                                                        mod->percpu_asi,
+                                                        mod->percpu_asi_size)) {
+				preempt_enable();
+				return true;
+                        }
+#endif
 		}
 	}
 
@@ -2344,6 +2428,10 @@ static int simplify_symbols(struct module *mod, const struct load_info *info)
 			/* Divert to percpu allocation if a percpu var. */
 			if (sym[i].st_shndx == info->index.pcpu)
 				secbase = (unsigned long)mod_percpu(mod);
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+                        else if (sym[i].st_shndx == info->index.pcpu_asi)
+				secbase = (unsigned long)mod_percpu_asi(mod);
+#endif
 			else
 				secbase = info->sechdrs[sym[i].st_shndx].sh_addr;
 			sym[i].st_value += secbase;
@@ -2664,6 +2752,10 @@ static char elf_type(const Elf_Sym *sym, const struct load_info *info)
 		return 'U';
 	if (sym->st_shndx == SHN_ABS || sym->st_shndx == info->index.pcpu)
 		return 'a';
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+        if (sym->st_shndx == info->index.pcpu_asi)
+		return 'a';
+#endif
 	if (sym->st_shndx >= SHN_LORESERVE)
 		return '?';
 	if (sechdrs[sym->st_shndx].sh_flags & SHF_EXECINSTR)
@@ -2691,7 +2783,8 @@ static char elf_type(const Elf_Sym *sym, const struct load_info *info)
 }
 
 static bool is_core_symbol(const Elf_Sym *src, const Elf_Shdr *sechdrs,
-			unsigned int shnum, unsigned int pcpundx)
+			unsigned int shnum, unsigned int pcpundx,
+                        unsigned pcpu_asi_ndx)
 {
 	const Elf_Shdr *sec;
 
@@ -2701,7 +2794,7 @@ static bool is_core_symbol(const Elf_Sym *src, const Elf_Shdr *sechdrs,
 		return false;
 
 #ifdef CONFIG_KALLSYMS_ALL
-	if (src->st_shndx == pcpundx)
+	if (src->st_shndx == pcpundx || src->st_shndx == pcpu_asi_ndx )
 		return true;
 #endif
 
@@ -2743,7 +2836,7 @@ static void layout_symtab(struct module *mod, struct load_info *info)
 	for (ndst = i = 0; i < nsrc; i++) {
 		if (i == 0 || is_livepatch_module(mod) ||
 		    is_core_symbol(src+i, info->sechdrs, info->hdr->e_shnum,
-				   info->index.pcpu)) {
+				   info->index.pcpu, info->index.pcpu_asi)) {
 			strtab_size += strlen(&info->strtab[src[i].st_name])+1;
 			ndst++;
 		}
@@ -2807,7 +2900,7 @@ static void add_kallsyms(struct module *mod, const struct load_info *info)
 		mod->kallsyms->typetab[i] = elf_type(src + i, info);
 		if (i == 0 || is_livepatch_module(mod) ||
 		    is_core_symbol(src+i, info->sechdrs, info->hdr->e_shnum,
-				   info->index.pcpu)) {
+				   info->index.pcpu, info->index.pcpu_asi)) {
 			mod->core_kallsyms.typetab[ndst] =
 			    mod->kallsyms->typetab[i];
 			dst[ndst] = src[i];
@@ -3289,6 +3382,12 @@ static int setup_load_info(struct load_info *info, int flags)
 
 	info->index.pcpu = find_pcpusec(info);
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	info->index.pcpu_asi = find_pcpusec_asi(info);
+#else
+        info->index.pcpu_asi = 0;
+#endif
+
 	return 0;
 }
 
@@ -3629,6 +3728,12 @@ static struct module *layout_and_allocate(struct load_info *info, int flags)
 	/* We will do a special allocation for per-cpu sections later. */
 	info->sechdrs[info->index.pcpu].sh_flags &= ~(unsigned long)SHF_ALLOC;
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+        if (info->index.pcpu_asi)
+               info->sechdrs[info->index.pcpu_asi].sh_flags &=
+                                                    ~(unsigned long)SHF_ALLOC;
+#endif
+
 	/*
 	 * Mark ro_after_init section with SHF_RO_AFTER_INIT so that
 	 * layout_sections() can put it in the right place.
@@ -3699,6 +3804,14 @@ static int post_relocation(struct module *mod, const struct load_info *info)
 	/* Copy relocated percpu area over. */
 	percpu_modcopy(mod, (void *)info->sechdrs[info->index.pcpu].sh_addr,
 		       info->sechdrs[info->index.pcpu].sh_size);
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	/* Copy relocated percpu ASI area over. */
+	percpu_asi_modcopy(
+                      mod,
+                      (void *)info->sechdrs[info->index.pcpu_asi].sh_addr,
+		      info->sechdrs[info->index.pcpu_asi].sh_size);
+#endif
 
 	/* Setup kallsyms-specific fields. */
 	add_kallsyms(mod, info);
@@ -4094,6 +4207,11 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	err = percpu_modalloc(mod, info);
 	if (err)
 		goto unlink_mod;
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	err = percpu_asi_modalloc(mod, info);
+	if (err)
+		goto unlink_mod;
+#endif
 
 	/* Now module is in final location, initialize linked lists, etc. */
 	err = module_unload_init(mod);
@@ -4183,7 +4301,11 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	/* Get rid of temporary copy. */
 	free_copy(info);
 
-        asi_load_module(mod);
+        err = asi_load_module(mod);
+	/* If the ASI loading failed, it doesn't necessarily mean that the
+	 * module loading failed. We print an error and move on. */
+        if (err)
+                pr_err("ASI: failed loading module %s", mod->name);
 
 	/* Done! */
 	trace_module_load(mod);

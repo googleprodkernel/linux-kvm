@@ -463,6 +463,12 @@ struct module {
 	/* Per-cpu data. */
 	void __percpu *percpu;
 	unsigned int percpu_size;
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	/* Per-cpu data for ASI */
+	void __percpu *percpu_asi;
+	unsigned int percpu_asi_size;
+#endif /* CONFIG_ADDRESS_SPACE_ISOLATION */
+
 #endif
 	void *noinstr_text_start;
 	unsigned int noinstr_text_size;

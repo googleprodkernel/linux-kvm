@@ -13,7 +13,8 @@
 
 /* enough to cover all DEFINE_PER_CPUs in modules */
 #ifdef CONFIG_MODULES
-#define PERCPU_MODULE_RESERVE		(8 << 10)
+/* #define PERCPU_MODULE_RESERVE		(8 << 10) */
+#define PERCPU_MODULE_RESERVE		(16 << 10)
 #else
 #define PERCPU_MODULE_RESERVE		0
 #endif
@@ -123,6 +124,11 @@ extern int __init pcpu_page_first_chunk(size_t reserved_size,
 #endif
 
 extern void __percpu *__alloc_reserved_percpu(size_t size, size_t align) __alloc_size(1);
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+extern void __percpu *__alloc_reserved_percpu_asi(size_t size, size_t align);
+#endif
+
 extern bool __is_kernel_percpu_address(unsigned long addr, unsigned long *can_addr);
 extern bool is_kernel_percpu_address(unsigned long addr);
 

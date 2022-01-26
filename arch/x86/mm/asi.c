@@ -309,6 +309,32 @@ static int __init set_asi_param(char *str)
 }
 early_param("asi", set_asi_param);
 
+static int asi_map_percpu(struct asi *asi, void *percpu_addr, size_t len)
+{
+       int cpu, err;
+       void *ptr;
+
+       for_each_possible_cpu(cpu) {
+               ptr = per_cpu_ptr(percpu_addr, cpu);
+               err = asi_map(asi, ptr, len);
+               if (err)
+                       return err;
+       }
+
+       return 0;
+}
+
+static void asi_unmap_percpu(struct asi *asi, void *percpu_addr, size_t len)
+{
+       int cpu;
+       void *ptr;
+
+       for_each_possible_cpu(cpu) {
+               ptr = per_cpu_ptr(percpu_addr, cpu);
+               asi_unmap(asi, ptr, len, true);
+       }
+}
+
 /* asi_load_module() is called from layout_and_allocate() in kernel/module.c
  * We map the module and its data in init_mm.asi_pgd[0].
 */
@@ -347,7 +373,13 @@ int asi_load_module(struct module* module)
         if (err)
                 return err;
 
-        return 0;
+	err = asi_map_percpu(ASI_GLOBAL_NONSENSITIVE,
+			     module->percpu_asi,
+			     module->percpu_asi_size );
+        if (err)
+                return err;
+
+       return 0;
 }
 EXPORT_SYMBOL_GPL(asi_load_module);
 
@@ -371,6 +403,9 @@ void asi_unload_module(struct module* module)
                       module->core_layout.base +
                       module->core_layout.once_section_offset,
                       module->core_layout.once_section_size, true);
+
+	asi_unmap_percpu(ASI_GLOBAL_NONSENSITIVE, module->percpu_asi,
+			 module->percpu_asi_size);
 
 }
 
@@ -398,6 +433,8 @@ static int __init asi_global_init(void)
 			swapper_pg_dir[pgd_index(PAGE_OFFSET) + i];
 
 	static_branch_enable(&asi_local_map_initialized);
+
+        pcpu_map_asi_reserved_chunk();
 
 	return 0;
 }

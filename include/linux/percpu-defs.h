@@ -170,6 +170,45 @@
 
 #define DEFINE_PER_CPU_READ_MOSTLY(type, name)				\
 	DEFINE_PER_CPU_SECTION(type, name, "..read_mostly")
+/*
+ * Declaration/definition used for per-CPU variables which for the sake for
+ * address space isolation (ASI) are deemed not sensitive
+ */
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+#define ASI_PERCPU_SECTION "..asi_non_sensitive"
+#else
+#define ASI_PERCPU_SECTION ""
+#endif
+
+#define DECLARE_PER_CPU_ASI_NOT_SENSITIVE(type, name)					\
+	DECLARE_PER_CPU_SECTION(type, name, ASI_PERCPU_SECTION)
+
+#define DECLARE_PER_CPU_SHARED_ALIGNED_ASI_NOT_SENSITIVE(type, name)	\
+	DECLARE_PER_CPU_SECTION(type, name, ASI_PERCPU_SECTION)         \
+	____cacheline_aligned_in_smp
+
+#define DECLARE_PER_CPU_ALIGNED_ASI_NOT_SENSITIVE(type, name)	        \
+	DECLARE_PER_CPU_SECTION(type, name, ASI_PERCPU_SECTION)         \
+	____cacheline_aligned
+
+#define DECLARE_PER_CPU_PAGE_ALIGNED_ASI_NOT_SENSITIVE(type, name)	\
+	DECLARE_PER_CPU_SECTION(type, name, ASI_PERCPU_SECTION)         \
+	__aligned(PAGE_SIZE)
+
+#define DEFINE_PER_CPU_ASI_NOT_SENSITIVE(type, name)		      	\
+	DEFINE_PER_CPU_SECTION(type, name, ASI_PERCPU_SECTION)
+
+#define DEFINE_PER_CPU_SHARED_ALIGNED_ASI_NOT_SENSITIVE(type, name)	\
+	DEFINE_PER_CPU_SECTION(type, name, ASI_PERCPU_SECTION)          \
+	____cacheline_aligned_in_smp
+
+#define DEFINE_PER_CPU_ALIGNED_ASI_NOT_SENSITIVE(type, name)	        \
+	DEFINE_PER_CPU_SECTION(type, name, ASI_PERCPU_SECTION)          \
+	____cacheline_aligned
+
+#define DEFINE_PER_CPU_PAGE_ALIGNED_ASI_NOT_SENSITIVE(type, name)	\
+	DEFINE_PER_CPU_SECTION(type, name, ASI_PERCPU_SECTION)          \
+	__aligned(PAGE_SIZE)
 
 /*
  * Declaration/definition used for per-CPU variables that should be accessed

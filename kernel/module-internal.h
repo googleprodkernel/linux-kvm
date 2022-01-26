@@ -25,6 +25,7 @@ struct load_info {
 #endif
 	struct {
 		unsigned int sym, str, mod, vers, info, pcpu;
+                unsigned int pcpu_asi;
 	} index;
 };
 
