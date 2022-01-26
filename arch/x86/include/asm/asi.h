@@ -98,6 +98,9 @@ static inline void asi_init_thread_state(struct thread_struct *thread)
 	thread->intr_nest_depth = 0;
 }
 
+int asi_load_module(struct module* module);
+void asi_unload_module(struct module* module);
+
 static inline void asi_set_target_unrestricted(void)
 {
 	if (static_cpu_has(X86_FEATURE_ASI)) {

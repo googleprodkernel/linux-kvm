@@ -336,6 +336,15 @@ struct module_layout {
 #ifdef CONFIG_MODULES_TREE_LOOKUP
 	struct mod_tree_node mtn;
 #endif
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+        unsigned int asi_section_offset;
+        unsigned int asi_section_size;
+        unsigned int asi_readmostly_section_offset;
+        unsigned int asi_readmostly_section_size;
+        unsigned int once_section_offset;
+        unsigned int once_section_size;
+#endif
 };
 
 #ifdef CONFIG_MODULES_TREE_LOOKUP

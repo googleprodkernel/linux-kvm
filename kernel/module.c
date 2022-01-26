@@ -2159,6 +2159,8 @@ static void free_module(struct module *mod)
 {
 	trace_module_free(mod);
 
+	asi_unload_module(mod);
+
 	mod_sysfs_teardown(mod);
 
 	/*
@@ -2416,6 +2418,31 @@ static bool module_init_layout_section(const char *sname)
 	return module_init_section(sname);
 }
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+static void asi_record_sections_layout(struct module *mod,
+                                       const char *sname,
+                                       Elf_Shdr *s)
+{
+        if (strstarts(sname, ASI_NON_SENSITIVE_READ_MOSTLY_SECTION_NAME)) {
+                mod->core_layout.asi_readmostly_section_offset = s->sh_entsize;
+                mod->core_layout.asi_readmostly_section_size   = s->sh_size;
+        }
+        else if (strstarts(sname, ASI_NON_SENSITIVE_SECTION_NAME)) {
+                mod->core_layout.asi_section_offset = s->sh_entsize;
+                mod->core_layout.asi_section_size   = s->sh_size;
+        }
+        if (strstarts(sname, ".data.once")) {
+                mod->core_layout.once_section_offset = s->sh_entsize;
+                mod->core_layout.once_section_size   = s->sh_size;
+        }
+}
+#else
+static void asi_record_sections_layout(struct module *mod,
+                                       const char *sname,
+                                       Elf_Shdr *s)
+{}
+#endif
+
 /*
  * Lay out the SHF_ALLOC sections in a way not dissimilar to how ld
  * might -- code, read-only data, read-write data, small data.  Tally
@@ -2453,6 +2480,7 @@ static void layout_sections(struct module *mod, struct load_info *info)
 			    || module_init_layout_section(sname))
 				continue;
 			s->sh_entsize = get_offset(mod, &mod->core_layout.size, s, i);
+                        asi_record_sections_layout(mod, sname, s);
 			pr_debug("\t%s\n", sname);
 		}
 		switch (m) {
@@ -3558,6 +3586,25 @@ static bool blacklisted(const char *module_name)
 }
 core_param(module_blacklist, module_blacklist, charp, 0400);
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+static void asi_fix_section_size_and_alignment(struct load_info *info,
+                                               char *section_to_fix)
+{
+	unsigned int ndx = find_sec(info, section_to_fix );
+	if (!ndx)
+                return;
+
+        info->sechdrs[ndx].sh_addralign = PAGE_SIZE;
+        info->sechdrs[ndx].sh_size =
+            ALIGN( info->sechdrs[ndx].sh_size, PAGE_SIZE );
+}
+#else
+static inline void asi_fix_section_size_and_alignment(struct load_info *info,
+                                               char *section_to_fix)
+{}
+#endif
+
+
 static struct module *layout_and_allocate(struct load_info *info, int flags)
 {
 	struct module *mod;
@@ -3599,6 +3646,15 @@ static struct module *layout_and_allocate(struct load_info *info, int flags)
 	ndx = find_sec(info, "__jump_table");
 	if (ndx)
 		info->sechdrs[ndx].sh_flags |= SHF_RO_AFTER_INIT;
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+        /* These are sections we will want to map into an ASI page-table. We
+         * therefore need these sections to be aligned to a PAGE_SIZE */
+        asi_fix_section_size_and_alignment(info, ASI_NON_SENSITIVE_SECTION_NAME);
+        asi_fix_section_size_and_alignment(info,
+                                           ASI_NON_SENSITIVE_READ_MOSTLY_SECTION_NAME);
+        asi_fix_section_size_and_alignment(info, ".data.once");
+#endif
 
 	/*
 	 * Determine total sizes, and put offsets in sh_entsize.  For now
@@ -4126,6 +4182,8 @@ static int load_module(struct load_info *info, const char __user *uargs,
 
 	/* Get rid of temporary copy. */
 	free_copy(info);
+
+        asi_load_module(mod);
 
 	/* Done! */
 	trace_module_load(mod);

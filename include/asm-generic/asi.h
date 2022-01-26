@@ -120,12 +120,15 @@ void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len) { }
 
 #define static_asi_enabled() false
 
+static inline int asi_load_module(struct module* module) {return 0;}
 
 /* IMPORTANT: Any modification to the name here should also be applied to
  * include/asm-generic/vmlinux.lds.h */
 
 #define __asi_not_sensitive
 #define __asi_not_sensitive_readmostly
+
+static inline void asi_unload_module(struct module* module) { }
 
 #endif  /* !_ASSEMBLY_ */
 

@@ -5,6 +5,7 @@
 #include <linux/memcontrol.h>
 #include <linux/moduleparam.h>
 #include <linux/slab.h>
+#include <linux/module.h>
 
 #include <asm/asi.h>
 #include <asm/pgalloc.h>
@@ -307,6 +308,71 @@ static int __init set_asi_param(char *str)
 	return 0;
 }
 early_param("asi", set_asi_param);
+
+/* asi_load_module() is called from layout_and_allocate() in kernel/module.c
+ * We map the module and its data in init_mm.asi_pgd[0].
+*/
+int asi_load_module(struct module* module)
+{
+        int err = 0;
+
+        /* Map the cod/text */
+        err = asi_map(ASI_GLOBAL_NONSENSITIVE,
+                      module->core_layout.base,
+                      module->core_layout.ro_after_init_size );
+        if (err)
+                return err;
+
+        /* Map global variables annotated as non-sensitive for ASI */
+        err = asi_map(ASI_GLOBAL_NONSENSITIVE,
+                      module->core_layout.base +
+                      module->core_layout.asi_section_offset,
+                      module->core_layout.asi_section_size );
+        if (err)
+                return err;
+
+        /* Map global variables annotated as non-sensitive for ASI */
+        err = asi_map(ASI_GLOBAL_NONSENSITIVE,
+                      module->core_layout.base +
+                      module->core_layout.asi_readmostly_section_offset,
+                      module->core_layout.asi_readmostly_section_size);
+        if (err)
+                return err;
+
+        /* Map .data.once section as well */
+        err = asi_map(ASI_GLOBAL_NONSENSITIVE,
+                      module->core_layout.base +
+                      module->core_layout.once_section_offset,
+                      module->core_layout.once_section_size );
+        if (err)
+                return err;
+
+        return 0;
+}
+EXPORT_SYMBOL_GPL(asi_load_module);
+
+void asi_unload_module(struct module* module)
+{
+        asi_unmap(ASI_GLOBAL_NONSENSITIVE,
+                      module->core_layout.base,
+                      module->core_layout.ro_after_init_size, true);
+
+        asi_unmap(ASI_GLOBAL_NONSENSITIVE,
+                      module->core_layout.base +
+                      module->core_layout.asi_section_offset,
+                      module->core_layout.asi_section_size, true);
+
+        asi_unmap(ASI_GLOBAL_NONSENSITIVE,
+                      module->core_layout.base +
+                      module->core_layout.asi_readmostly_section_offset,
+                      module->core_layout.asi_readmostly_section_size, true);
+
+        asi_unmap(ASI_GLOBAL_NONSENSITIVE,
+                      module->core_layout.base +
+                      module->core_layout.once_section_offset,
+                      module->core_layout.once_section_size, true);
+
+}
 
 static int __init asi_global_init(void)
 {
