@@ -6609,7 +6609,11 @@ static noinstr void vmx_vcpu_enter_exit(struct kvm_vcpu *vcpu,
 
 	kvm_guest_enter_irqoff();
 
-	vmx_flush_sensitive_cpu_state(vcpu);
+        /* If Address Space Isolation is enabled, it will take care of L1D
+         * flushes, and will also mitigate MDS. In other words, if no ASI -
+         * flush sensitive cpu state. */
+        if (!static_asi_enabled() || !mm_asi_enabled(current->mm))
+                vmx_flush_sensitive_cpu_state(vcpu);
 
 	asi_enter(vcpu->kvm->asi);
 
