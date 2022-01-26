@@ -213,7 +213,7 @@ void kvm_recalculate_apic_map(struct kvm *kvm)
 
 	new = kvzalloc(sizeof(struct kvm_apic_map) +
 	                   sizeof(struct kvm_lapic *) * ((u64)max_id + 1),
-			   GFP_KERNEL_ACCOUNT);
+			   GFP_KERNEL_ACCOUNT | __GFP_LOCAL_NONSENSITIVE);
 
 	if (!new)
 		goto out;
@@ -993,7 +993,7 @@ bool kvm_irq_delivery_to_apic_fast(struct kvm *kvm, struct kvm_lapic *src,
 	*r = -1;
 
 	if (irq->shorthand == APIC_DEST_SELF) {
-		*r = kvm_apic_set_irq(src->vcpu, irq, dest_map);
+              *r = kvm_apic_set_irq(src->vcpu, irq, dest_map);
 		return true;
 	}
 
@@ -2455,13 +2455,14 @@ int kvm_create_lapic(struct kvm_vcpu *vcpu, int timer_advance_ns)
 
 	ASSERT(vcpu != NULL);
 
-	apic = kzalloc(sizeof(*apic), GFP_KERNEL_ACCOUNT);
+	apic = kzalloc(sizeof(*apic), GFP_KERNEL_ACCOUNT | __GFP_LOCAL_NONSENSITIVE);
 	if (!apic)
 		goto nomem;
 
 	vcpu->arch.apic = apic;
 
-	apic->regs = (void *)get_zeroed_page(GFP_KERNEL_ACCOUNT);
+	apic->regs = (void *)get_zeroed_page(GFP_KERNEL_ACCOUNT
+                                             | __GFP_LOCAL_NONSENSITIVE);
 	if (!apic->regs) {
 		printk(KERN_ERR "malloc apic regs error for vcpu %x\n",
 		       vcpu->vcpu_id);

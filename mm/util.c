@@ -196,7 +196,8 @@ void *vmemdup_user(const void __user *src, size_t len)
 {
 	void *p;
 
-	p = kvmalloc(len, GFP_USER);
+        /* TODO(oweisse): is this secure? */
+	p = kvmalloc(len, GFP_USER | __GFP_LOCAL_NONSENSITIVE);
 	if (!p)
 		return ERR_PTR(-ENOMEM);
 

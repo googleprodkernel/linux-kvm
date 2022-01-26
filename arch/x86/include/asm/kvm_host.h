@@ -1562,7 +1562,8 @@ static inline void kvm_ops_static_call_update(void)
 #define __KVM_HAVE_ARCH_VM_ALLOC
 static inline struct kvm *kvm_arch_alloc_vm(void)
 {
-	return __vmalloc(kvm_x86_ops.vm_size, GFP_KERNEL_ACCOUNT | __GFP_ZERO);
+	return __vmalloc(kvm_x86_ops.vm_size, GFP_KERNEL_ACCOUNT | __GFP_ZERO |
+                         __GFP_GLOBAL_NONSENSITIVE);
 }
 
 #define __KVM_HAVE_ARCH_VM_FREE

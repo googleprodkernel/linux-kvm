@@ -1539,7 +1539,8 @@ static int __rb_allocate_pages(struct ring_buffer_per_cpu *cpu_buffer,
 	 * gracefully without invoking oom-killer and the system is not
 	 * destabilized.
 	 */
-	mflags = GFP_KERNEL | __GFP_RETRY_MAYFAIL;
+        /* TODO(oweisse): this is a hack to enable ASI tracing. */
+	mflags = GFP_KERNEL | __GFP_RETRY_MAYFAIL | __GFP_GLOBAL_NONSENSITIVE;
 
 	/*
 	 * If a user thread allocates too much, and si_mem_available()
@@ -1718,7 +1719,7 @@ struct trace_buffer *__ring_buffer_alloc(unsigned long size, unsigned flags,
 
 	/* keep it in its own cache line */
 	buffer = kzalloc(ALIGN(sizeof(*buffer), cache_line_size()),
-			 GFP_KERNEL);
+			 GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE);
 	if (!buffer)
 		return NULL;
 

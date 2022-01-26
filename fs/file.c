@@ -117,7 +117,8 @@ static struct fdtable * alloc_fdtable(unsigned int nr)
 	if (!fdt)
 		goto out;
 	fdt->max_fds = nr;
-	data = kvmalloc_array(nr, sizeof(struct file *), GFP_KERNEL_ACCOUNT);
+	data = kvmalloc_array(nr, sizeof(struct file *),
+                              GFP_KERNEL_ACCOUNT | __GFP_LOCAL_NONSENSITIVE);
 	if (!data)
 		goto out_fdt;
 	fdt->fd = data;

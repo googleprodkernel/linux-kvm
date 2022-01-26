@@ -329,7 +329,8 @@ static struct kmem_cache *kvm_alloc_emulator_cache(void)
 
 	return kmem_cache_create_usercopy("x86_emulator", size,
 					  __alignof__(struct x86_emulate_ctxt),
-					  SLAB_ACCOUNT, useroffset,
+					  SLAB_ACCOUNT|SLAB_LOCAL_NONSENSITIVE,
+                                          useroffset,
 					  size - useroffset, NULL);
 }
 
@@ -10969,7 +10970,7 @@ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
 
 	r = -ENOMEM;
 
-	page = alloc_page(GFP_KERNEL_ACCOUNT | __GFP_ZERO);
+	page = alloc_page(GFP_KERNEL_ACCOUNT | __GFP_ZERO | __GFP_LOCAL_NONSENSITIVE);
 	if (!page)
 		goto fail_free_lapic;
 	vcpu->arch.pio_data = page_address(page);
@@ -11718,7 +11719,8 @@ static int kvm_alloc_memslot_metadata(struct kvm *kvm,
 
 		lpages = __kvm_mmu_slot_lpages(slot, npages, level);
 
-		linfo = kvcalloc(lpages, sizeof(*linfo), GFP_KERNEL_ACCOUNT);
+		linfo = kvcalloc(lpages, sizeof(*linfo),
+				 GFP_KERNEL_ACCOUNT | __GFP_LOCAL_NONSENSITIVE);
 		if (!linfo)
 			goto out_free;
 

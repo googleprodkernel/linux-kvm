@@ -370,6 +370,9 @@ static inline void *mmu_memory_cache_alloc_obj(struct kvm_mmu_memory_cache *mc,
 					       gfp_t gfp_flags)
 {
 	gfp_flags |= mc->gfp_zero;
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	gfp_flags |= mc->gfp_asi;
+#endif
 
 	if (mc->kmem_cache)
 		return kmem_cache_alloc(mc->kmem_cache, gfp_flags);
@@ -863,7 +866,8 @@ static struct kvm_memslots *kvm_alloc_memslots(void)
 	int i;
 	struct kvm_memslots *slots;
 
-	slots = kvzalloc(sizeof(struct kvm_memslots), GFP_KERNEL_ACCOUNT);
+	slots = kvzalloc(sizeof(struct kvm_memslots),
+                         GFP_KERNEL_ACCOUNT | __GFP_LOCAL_NONSENSITIVE);
 	if (!slots)
 		return NULL;
 
@@ -1529,7 +1533,7 @@ static struct kvm_memslots *kvm_dup_memslots(struct kvm_memslots *old,
 	else
 		new_size = kvm_memslots_size(old->used_slots);
 
-	slots = kvzalloc(new_size, GFP_KERNEL_ACCOUNT);
+	slots = kvzalloc(new_size, GFP_KERNEL_ACCOUNT | __GFP_LOCAL_NONSENSITIVE);
 	if (likely(slots))
 		kvm_copy_memslots(slots, old);
 
@@ -3565,7 +3569,7 @@ static int kvm_vm_ioctl_create_vcpu(struct kvm *kvm, u32 id)
 	}
 
 	BUILD_BUG_ON(sizeof(struct kvm_run) > PAGE_SIZE);
-	page = alloc_page(GFP_KERNEL_ACCOUNT | __GFP_ZERO);
+	page = alloc_page(GFP_KERNEL_ACCOUNT | __GFP_ZERO | __GFP_LOCAL_NONSENSITIVE);
 	if (!page) {
 		r = -ENOMEM;
 		goto vcpu_free;
@@ -4959,7 +4963,7 @@ int kvm_io_bus_register_dev(struct kvm *kvm, enum kvm_bus bus_idx, gpa_t addr,
 		return -ENOSPC;
 
 	new_bus = kmalloc(struct_size(bus, range, bus->dev_count + 1),
-			  GFP_KERNEL_ACCOUNT);
+			  GFP_KERNEL_ACCOUNT | __GFP_LOCAL_NONSENSITIVE);
 	if (!new_bus)
 		return -ENOMEM;
 

@@ -9329,7 +9329,8 @@ void __init sched_init(void)
 #endif /* CONFIG_RT_GROUP_SCHED */
 
 #ifdef CONFIG_CGROUP_SCHED
-	task_group_cache = KMEM_CACHE(task_group, 0);
+        /* TODO: (oweisse) add SLAB_NONSENSITIVE */
+	task_group_cache = KMEM_CACHE(task_group, SLAB_GLOBAL_NONSENSITIVE);
 
 	list_add(&root_task_group.list, &task_groups);
 	INIT_LIST_HEAD(&root_task_group.children);
@@ -9741,7 +9742,8 @@ struct task_group *sched_create_group(struct task_group *parent)
 {
 	struct task_group *tg;
 
-	tg = kmem_cache_alloc(task_group_cache, GFP_KERNEL | __GFP_ZERO);
+	tg = kmem_cache_alloc(task_group_cache,
+                              GFP_KERNEL | __GFP_ZERO | __GFP_GLOBAL_NONSENSITIVE);
 	if (!tg)
 		return ERR_PTR(-ENOMEM);
 

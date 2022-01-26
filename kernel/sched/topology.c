@@ -569,7 +569,7 @@ static struct root_domain *alloc_rootdomain(void)
 {
 	struct root_domain *rd;
 
-	rd = kzalloc(sizeof(*rd), GFP_KERNEL);
+	rd = kzalloc(sizeof(*rd), GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE);
 	if (!rd)
 		return NULL;
 
@@ -2044,21 +2044,24 @@ static int __sdt_alloc(const struct cpumask *cpu_map)
 			struct sched_group_capacity *sgc;
 
 			sd = kzalloc_node(sizeof(struct sched_domain) + cpumask_size(),
-					GFP_KERNEL, cpu_to_node(j));
+					GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE,
+                                        cpu_to_node(j));
 			if (!sd)
 				return -ENOMEM;
 
 			*per_cpu_ptr(sdd->sd, j) = sd;
 
 			sds = kzalloc_node(sizeof(struct sched_domain_shared),
-					GFP_KERNEL, cpu_to_node(j));
+					GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE,
+                                        cpu_to_node(j));
 			if (!sds)
 				return -ENOMEM;
 
 			*per_cpu_ptr(sdd->sds, j) = sds;
 
 			sg = kzalloc_node(sizeof(struct sched_group) + cpumask_size(),
-					GFP_KERNEL, cpu_to_node(j));
+					GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE,
+                                        cpu_to_node(j));
 			if (!sg)
 				return -ENOMEM;
 
@@ -2067,7 +2070,8 @@ static int __sdt_alloc(const struct cpumask *cpu_map)
 			*per_cpu_ptr(sdd->sg, j) = sg;
 
 			sgc = kzalloc_node(sizeof(struct sched_group_capacity) + cpumask_size(),
-					GFP_KERNEL, cpu_to_node(j));
+					GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE,
+                                        cpu_to_node(j));
 			if (!sgc)
 				return -ENOMEM;
 

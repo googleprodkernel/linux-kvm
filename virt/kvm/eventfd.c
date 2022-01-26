@@ -306,7 +306,8 @@ kvm_irqfd_assign(struct kvm *kvm, struct kvm_irqfd *args)
 	if (!kvm_arch_irqfd_allowed(kvm, args))
 		return -EINVAL;
 
-	irqfd = kzalloc(sizeof(*irqfd), GFP_KERNEL_ACCOUNT);
+	irqfd = kzalloc(sizeof(*irqfd),
+                        GFP_KERNEL_ACCOUNT | __GFP_GLOBAL_NONSENSITIVE);
 	if (!irqfd)
 		return -ENOMEM;
 
@@ -813,7 +814,7 @@ static int kvm_assign_ioeventfd_idx(struct kvm *kvm,
 	if (IS_ERR(eventfd))
 		return PTR_ERR(eventfd);
 
-	p = kzalloc(sizeof(*p), GFP_KERNEL_ACCOUNT);
+	p = kzalloc(sizeof(*p), GFP_KERNEL_ACCOUNT | __GFP_GLOBAL_NONSENSITIVE);
 	if (!p) {
 		ret = -ENOMEM;
 		goto fail;

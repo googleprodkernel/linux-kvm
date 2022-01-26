@@ -3309,7 +3309,8 @@ EXPORT_SYMBOL(vzalloc);
 void *vmalloc_user(unsigned long size)
 {
 	return __vmalloc_node_range(size, SHMLBA,  VMALLOC_START, VMALLOC_END,
-				    GFP_KERNEL | __GFP_ZERO, PAGE_KERNEL,
+				    GFP_KERNEL | __GFP_ZERO
+                                    | __GFP_LOCAL_NONSENSITIVE, PAGE_KERNEL,
 				    VM_USERMAP, NUMA_NO_NODE,
 				    __builtin_return_address(0));
 }

@@ -144,7 +144,7 @@ static int alloc_clustermask(unsigned int cpu, int node)
 	}
 
 	cluster_hotplug_mask = kzalloc_node(sizeof(*cluster_hotplug_mask),
-					    GFP_KERNEL, node);
+					    GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE, node);
 	if (!cluster_hotplug_mask)
 		return -ENOMEM;
 	cluster_hotplug_mask->node = node;

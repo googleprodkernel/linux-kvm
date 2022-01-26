@@ -2629,7 +2629,7 @@ void free_loaded_vmcs(struct loaded_vmcs *loaded_vmcs)
 	free_vmcs(loaded_vmcs->vmcs);
 	loaded_vmcs->vmcs = NULL;
 	if (loaded_vmcs->msr_bitmap)
-		free_page((unsigned long)loaded_vmcs->msr_bitmap);
+                kfree(loaded_vmcs->msr_bitmap);
 	WARN_ON(loaded_vmcs->shadow_vmcs != NULL);
 }
 
@@ -2648,7 +2648,9 @@ int alloc_loaded_vmcs(struct loaded_vmcs *loaded_vmcs)
 
 	if (cpu_has_vmx_msr_bitmap()) {
 		loaded_vmcs->msr_bitmap = (unsigned long *)
-				__get_free_page(GFP_KERNEL_ACCOUNT);
+				kzalloc(PAGE_SIZE,
+                                        GFP_KERNEL_ACCOUNT |
+                                        __GFP_LOCAL_NONSENSITIVE );
 		if (!loaded_vmcs->msr_bitmap)
 			goto out_vmcs;
 		memset(loaded_vmcs->msr_bitmap, 0xff, PAGE_SIZE);

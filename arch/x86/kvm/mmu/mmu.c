@@ -5630,6 +5630,13 @@ int kvm_mmu_create(struct kvm_vcpu *vcpu)
 	vcpu->arch.mmu_page_header_cache.gfp_zero = __GFP_ZERO;
 
 	vcpu->arch.mmu_shadow_page_cache.gfp_zero = __GFP_ZERO;
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	if (static_cpu_has(X86_FEATURE_ASI) && mm_asi_enabled(current->mm))
+	        vcpu->arch.mmu_shadow_page_cache.gfp_asi =
+                                                      __GFP_LOCAL_NONSENSITIVE;
+        else
+	        vcpu->arch.mmu_shadow_page_cache.gfp_asi = 0;
+#endif
 
 	vcpu->arch.mmu = &vcpu->arch.root_mmu;
 	vcpu->arch.walk_mmu = &vcpu->arch.root_mmu;

@@ -5143,20 +5143,21 @@ static struct mem_cgroup *mem_cgroup_alloc(void)
 	size = sizeof(struct mem_cgroup);
 	size += nr_node_ids * sizeof(struct mem_cgroup_per_node *);
 
-	memcg = kzalloc(size, GFP_KERNEL);
+	memcg = kzalloc(size, GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE);
 	if (!memcg)
 		return ERR_PTR(error);
 
 	memcg->id.id = idr_alloc(&mem_cgroup_idr, NULL,
 				 1, MEM_CGROUP_ID_MAX,
-				 GFP_KERNEL);
+				 GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE);
 	if (memcg->id.id < 0) {
 		error = memcg->id.id;
 		goto fail;
 	}
 
 	memcg->vmstats_percpu = alloc_percpu_gfp(struct memcg_vmstats_percpu,
-						 GFP_KERNEL_ACCOUNT);
+						 GFP_KERNEL_ACCOUNT |
+                                                 __GFP_GLOBAL_NONSENSITIVE);
 	if (!memcg->vmstats_percpu)
 		goto fail;
 

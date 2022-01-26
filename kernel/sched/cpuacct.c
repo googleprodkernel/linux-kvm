@@ -64,15 +64,17 @@ cpuacct_css_alloc(struct cgroup_subsys_state *parent_css)
 	if (!parent_css)
 		return &root_cpuacct.css;
 
-	ca = kzalloc(sizeof(*ca), GFP_KERNEL);
+	ca = kzalloc(sizeof(*ca), GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE);
 	if (!ca)
 		goto out;
 
-	ca->cpuusage = alloc_percpu(struct cpuacct_usage);
+	ca->cpuusage = alloc_percpu_gfp(struct cpuacct_usage,
+                                        GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE);
 	if (!ca->cpuusage)
 		goto out_free_ca;
 
-	ca->cpustat = alloc_percpu(struct kernel_cpustat);
+	ca->cpustat = alloc_percpu_gfp(struct kernel_cpustat,
+                                   GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE);
 	if (!ca->cpustat)
 		goto out_free_cpuusage;
 

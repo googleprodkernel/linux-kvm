@@ -168,6 +168,8 @@ static struct kmem_cache *task_struct_cachep;
 
 static inline struct task_struct *alloc_task_struct_node(int node)
 {
+        /* TODO: Figure how to allocate this propperly to ASI process map. This
+         * should be mapped in a __GFP_LOCAL_NONSENSITIVE slab. */
 	return kmem_cache_alloc_node(task_struct_cachep, GFP_KERNEL, node);
 }
 
@@ -214,6 +216,7 @@ static int free_vm_stack_cache(unsigned int cpu)
 
 static unsigned long *alloc_thread_stack_node(struct task_struct *tsk, int node)
 {
+  /* TODO: (oweisse) Add annotation to map the stack into ASI */
 #ifdef CONFIG_VMAP_STACK
 	void *stack;
 	int i;
@@ -242,9 +245,13 @@ static unsigned long *alloc_thread_stack_node(struct task_struct *tsk, int node)
 	 * so memcg accounting is performed manually on assigning/releasing
 	 * stacks to tasks. Drop __GFP_ACCOUNT.
 	 */
+        /* ASI: We intentionally don't pass VM_LOCAL_NONSENSITIVE nor
+         * __GFP_LOCAL_NONSENSITIVE since we don't have an mm yet. Later on we'll
+         * map the stack into the mm asi map. That being said, we do care about
+         * the stack weing allocaed below VMALLOC_LOCAL_NONSENSITIVE_END */
 	stack = __vmalloc_node_range(THREAD_SIZE, THREAD_ALIGN,
-				     VMALLOC_START, VMALLOC_END,
-				     THREADINFO_GFP & ~__GFP_ACCOUNT,
+				     VMALLOC_START, VMALLOC_LOCAL_NONSENSITIVE_END,
+				     (THREADINFO_GFP & (~__GFP_ACCOUNT)),
 				     PAGE_KERNEL,
 				     0, node, __builtin_return_address(0));
 
@@ -346,7 +353,8 @@ struct vm_area_struct *vm_area_alloc(struct mm_struct *mm)
 {
 	struct vm_area_struct *vma;
 
-	vma = kmem_cache_alloc(vm_area_cachep, GFP_KERNEL);
+	vma = kmem_cache_alloc(vm_area_cachep,
+                               GFP_KERNEL);
 	if (vma)
 		vma_init(vma, mm);
 	return vma;
@@ -683,6 +691,8 @@ static void check_mm(struct mm_struct *mm)
 #endif
 }
 
+/* TODO: (oweisse) ASI: we need to allocate mm such that it will only be visible
+ * within itself. */
 #define allocate_mm()	(kmem_cache_alloc(mm_cachep, GFP_KERNEL))
 #define free_mm(mm)	(kmem_cache_free(mm_cachep, (mm)))
 
@@ -823,9 +833,12 @@ void __init fork_init(void)
 
 	/* create a slab on which task_structs can be allocated */
 	task_struct_whitelist(&useroffset, &usersize);
+        /* TODO: (oweisse) for the time being this cache is shared among all tasks. We
+         * mark it SLAB_NONSENSITIVE so task_struct can be accessed withing ASI.
+         * A final secure solution should have this memory LOCAL, not GLOBAL.*/
 	task_struct_cachep = kmem_cache_create_usercopy("task_struct",
 			arch_task_struct_size, align,
-			SLAB_PANIC|SLAB_ACCOUNT,
+			SLAB_PANIC|SLAB_ACCOUNT|SLAB_GLOBAL_NONSENSITIVE,
 			useroffset, usersize, NULL);
 #endif
 
@@ -1601,6 +1614,7 @@ static int copy_sighand(unsigned long clone_flags, struct task_struct *tsk)
 		refcount_inc(&current->sighand->count);
 		return 0;
 	}
+        /* TODO: (oweisse) ASI replace with proper ASI allcation. */
 	sig = kmem_cache_alloc(sighand_cachep, GFP_KERNEL);
 	RCU_INIT_POINTER(tsk->sighand, sig);
 	if (!sig)
@@ -1649,6 +1663,8 @@ static int copy_signal(unsigned long clone_flags, struct task_struct *tsk)
 	if (clone_flags & CLONE_THREAD)
 		return 0;
 
+        /* TODO: (oweisse) figure out how to properly allocate this in ASI for local
+         * process */
 	sig = kmem_cache_zalloc(signal_cachep, GFP_KERNEL);
 	tsk->signal = sig;
 	if (!sig)
@@ -2923,7 +2939,8 @@ void __init proc_caches_init(void)
 			SLAB_ACCOUNT, sighand_ctor);
 	signal_cachep = kmem_cache_create("signal_cache",
 			sizeof(struct signal_struct), 0,
-			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_ACCOUNT,
+			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_ACCOUNT|
+                        SLAB_GLOBAL_NONSENSITIVE,
 			NULL);
 	files_cachep = kmem_cache_create("files_cache",
 			sizeof(struct files_struct), 0,
@@ -2941,13 +2958,18 @@ void __init proc_caches_init(void)
 	 */
 	mm_size = sizeof(struct mm_struct) + cpumask_size();
 
+        /* TODO: (oweisse) ASI replace with proper ASI allcation. */
 	mm_cachep = kmem_cache_create_usercopy("mm_struct",
 			mm_size, ARCH_MIN_MMSTRUCT_ALIGN,
-			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_ACCOUNT,
+			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_ACCOUNT
+                        |SLAB_GLOBAL_NONSENSITIVE,
 			offsetof(struct mm_struct, saved_auxv),
 			sizeof_field(struct mm_struct, saved_auxv),
 			NULL);
-	vm_area_cachep = KMEM_CACHE(vm_area_struct, SLAB_PANIC|SLAB_ACCOUNT);
+
+        /* TODO: (oweisse) ASI replace with proper ASI allcation. */
+	vm_area_cachep = KMEM_CACHE(vm_area_struct,
+                                    SLAB_PANIC|SLAB_ACCOUNT|SLAB_LOCAL_NONSENSITIVE);
 	mmap_init();
 	nsproxy_cache_init();
 }

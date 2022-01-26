@@ -1239,7 +1239,7 @@ static void ep_ptable_queue_proc(struct file *file, wait_queue_head_t *whead,
 	if (unlikely(!epi))	// an earlier allocation has failed
 		return;
 
-	pwq = kmem_cache_alloc(pwq_cache, GFP_KERNEL);
+	pwq = kmem_cache_alloc(pwq_cache, GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE);
 	if (unlikely(!pwq)) {
 		epq->epi = NULL;
 		return;
@@ -1453,7 +1453,8 @@ static int ep_insert(struct eventpoll *ep, const struct epoll_event *event,
 		return -ENOSPC;
 	percpu_counter_inc(&ep->user->epoll_watches);
 
-	if (!(epi = kmem_cache_zalloc(epi_cache, GFP_KERNEL))) {
+	if (!(epi = kmem_cache_zalloc(epi_cache,
+                                      GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE))) {
 		percpu_counter_dec(&ep->user->epoll_watches);
 		return -ENOMEM;
 	}
@@ -2373,11 +2374,12 @@ static int __init eventpoll_init(void)
 
 	/* Allocates slab cache used to allocate "struct epitem" items */
 	epi_cache = kmem_cache_create("eventpoll_epi", sizeof(struct epitem),
-			0, SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_ACCOUNT, NULL);
+			0, SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_ACCOUNT|SLAB_GLOBAL_NONSENSITIVE, NULL);
 
 	/* Allocates slab cache used to allocate "struct eppoll_entry" */
 	pwq_cache = kmem_cache_create("eventpoll_pwq",
-		sizeof(struct eppoll_entry), 0, SLAB_PANIC|SLAB_ACCOUNT, NULL);
+		sizeof(struct eppoll_entry), 0,
+                SLAB_PANIC|SLAB_ACCOUNT|SLAB_GLOBAL_NONSENSITIVE, NULL);
 
 	ephead_cache = kmem_cache_create("ep_head",
 		sizeof(struct epitems_head), 0, SLAB_PANIC|SLAB_ACCOUNT, NULL);

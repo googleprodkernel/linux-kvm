@@ -171,7 +171,8 @@ static int init_srcu_struct_fields(struct srcu_struct *ssp, bool is_static)
 	atomic_set(&ssp->srcu_barrier_cpu_cnt, 0);
 	INIT_DELAYED_WORK(&ssp->work, process_srcu);
 	if (!is_static)
-		ssp->sda = alloc_percpu(struct srcu_data);
+		ssp->sda = alloc_percpu_gfp(struct srcu_data,
+					GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE);
 	if (!ssp->sda)
 		return -ENOMEM;
 	init_srcu_struct_nodes(ssp);

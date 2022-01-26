@@ -477,7 +477,7 @@ static struct elf_phdr *load_elf_phdrs(const struct elfhdr *elf_ex,
 	if (size == 0 || size > 65536 || size > ELF_MIN_ALIGN)
 		goto out;
 
-	elf_phdata = kmalloc(size, GFP_KERNEL);
+	elf_phdata = kmalloc(size, GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE);
 	if (!elf_phdata)
 		goto out;
 

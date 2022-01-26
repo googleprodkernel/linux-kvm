@@ -103,15 +103,18 @@ int smpcfd_prepare_cpu(unsigned int cpu)
 {
 	struct call_function_data *cfd = &per_cpu(cfd_data, cpu);
 
-	if (!zalloc_cpumask_var_node(&cfd->cpumask, GFP_KERNEL,
+	if (!zalloc_cpumask_var_node(&cfd->cpumask,
+				     GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE,
 				     cpu_to_node(cpu)))
 		return -ENOMEM;
-	if (!zalloc_cpumask_var_node(&cfd->cpumask_ipi, GFP_KERNEL,
+	if (!zalloc_cpumask_var_node(&cfd->cpumask_ipi,
+				     GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE,
 				     cpu_to_node(cpu))) {
 		free_cpumask_var(cfd->cpumask);
 		return -ENOMEM;
 	}
-	cfd->pcpu = alloc_percpu(struct cfd_percpu);
+	cfd->pcpu = alloc_percpu_gfp(struct cfd_percpu,
+				     GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE);
 	if (!cfd->pcpu) {
 		free_cpumask_var(cfd->cpumask);
 		free_cpumask_var(cfd->cpumask_ipi);
@@ -179,10 +182,10 @@ static int __init csdlock_debug(char *str)
 }
 early_param("csdlock_debug", csdlock_debug);
 
-static DEFINE_PER_CPU(call_single_data_t *, cur_csd);
-static DEFINE_PER_CPU(smp_call_func_t, cur_csd_func);
-static DEFINE_PER_CPU(void *, cur_csd_info);
-static DEFINE_PER_CPU(struct cfd_seq_local, cfd_seq_local);
+static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(call_single_data_t *, cur_csd);
+static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(smp_call_func_t, cur_csd_func);
+static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(void *, cur_csd_info);
+static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(struct cfd_seq_local, cfd_seq_local);
 
 #define CSD_LOCK_TIMEOUT (5ULL * NSEC_PER_SEC)
 static atomic_t csd_bug_count = ATOMIC_INIT(0);

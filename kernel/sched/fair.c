@@ -11486,7 +11486,8 @@ int alloc_fair_sched_group(struct task_group *tg, struct task_group *parent)
 
 	for_each_possible_cpu(i) {
 		cfs_rq = kzalloc_node(sizeof(struct cfs_rq),
-				      GFP_KERNEL, cpu_to_node(i));
+				      GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE,
+                                      cpu_to_node(i));
 		if (!cfs_rq)
 			goto err;
 

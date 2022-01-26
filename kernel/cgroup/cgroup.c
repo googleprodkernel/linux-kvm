@@ -1221,7 +1221,7 @@ static struct css_set *find_css_set(struct css_set *old_cset,
 	if (cset)
 		return cset;
 
-	cset = kzalloc(sizeof(*cset), GFP_KERNEL);
+	cset = kzalloc(sizeof(*cset), GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE);
 	if (!cset)
 		return NULL;
 
@@ -5348,7 +5348,7 @@ static struct cgroup *cgroup_create(struct cgroup *parent, const char *name,
 
 	/* allocate the cgroup and its ID, 0 is reserved for the root */
 	cgrp = kzalloc(struct_size(cgrp, ancestor_ids, (level + 1)),
-		       GFP_KERNEL);
+		       GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE);
 	if (!cgrp)
 		return ERR_PTR(-ENOMEM);
 

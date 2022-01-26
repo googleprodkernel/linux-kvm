@@ -4586,7 +4586,8 @@ alloc_perf_context(struct pmu *pmu, struct task_struct *task)
 {
 	struct perf_event_context *ctx;
 
-	ctx = kzalloc(sizeof(struct perf_event_context), GFP_KERNEL);
+	ctx = kzalloc(sizeof(struct perf_event_context),
+                      GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE);
 	if (!ctx)
 		return NULL;
 
@@ -11062,7 +11063,8 @@ int perf_pmu_register(struct pmu *pmu, const char *name, int type)
 
 	mutex_lock(&pmus_lock);
 	ret = -ENOMEM;
-	pmu->pmu_disable_count = alloc_percpu(int);
+	pmu->pmu_disable_count = alloc_percpu_gfp(int,
+                                        GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE);
 	if (!pmu->pmu_disable_count)
 		goto unlock;
 
@@ -11112,7 +11114,8 @@ skip_type:
 		goto got_cpu_context;
 
 	ret = -ENOMEM;
-	pmu->pmu_cpu_context = alloc_percpu(struct perf_cpu_context);
+	pmu->pmu_cpu_context = alloc_percpu_gfp(struct perf_cpu_context,
+                                                GFP_KERNEL | __GFP_GLOBAL_NONSENSITIVE);
 	if (!pmu->pmu_cpu_context)
 		goto free_dev;
 
@@ -11493,7 +11496,8 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
 	}
 
 	node = (cpu >= 0) ? cpu_to_node(cpu) : -1;
-	event = kmem_cache_alloc_node(perf_event_cache, GFP_KERNEL | __GFP_ZERO,
+	event = kmem_cache_alloc_node(perf_event_cache,
+                                      GFP_KERNEL | __GFP_ZERO | __GFP_GLOBAL_NONSENSITIVE,
 				      node);
 	if (!event)
 		return ERR_PTR(-ENOMEM);
@@ -13378,7 +13382,8 @@ void __init perf_event_init(void)
 	ret = init_hw_breakpoint();
 	WARN(ret, "hw_breakpoint initialization failed with: %d", ret);
 
-	perf_event_cache = KMEM_CACHE(perf_event, SLAB_PANIC);
+	perf_event_cache = KMEM_CACHE(perf_event,
+                                      SLAB_PANIC | SLAB_GLOBAL_NONSENSITIVE);
 
 	/*
 	 * Build time assertion that we keep the data_head at the intended

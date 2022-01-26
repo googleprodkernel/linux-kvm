@@ -64,6 +64,9 @@ struct gfn_to_hva_cache {
 struct kvm_mmu_memory_cache {
 	int nobjs;
 	gfp_t gfp_zero;
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	gfp_t gfp_asi;
+#endif
 	struct kmem_cache *kmem_cache;
 	void *objects[KVM_ARCH_NR_OBJS_PER_MEMORY_CACHE];
 };

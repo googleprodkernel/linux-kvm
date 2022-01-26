@@ -310,7 +310,9 @@ int kvm_vcpu_ioctl_set_cpuid(struct kvm_vcpu *vcpu,
 		if (IS_ERR(e))
 			return PTR_ERR(e);
 
-		e2 = kvmalloc_array(cpuid->nent, sizeof(*e2), GFP_KERNEL_ACCOUNT);
+		e2 = kvmalloc_array(cpuid->nent, sizeof(*e2),
+                                    GFP_KERNEL_ACCOUNT |
+                                    __GFP_LOCAL_NONSENSITIVE);
 		if (!e2) {
 			r = -ENOMEM;
 			goto out_free_cpuid;
