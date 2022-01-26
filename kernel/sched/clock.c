@@ -84,7 +84,7 @@ static int __sched_clock_stable_early = 1;
 /*
  * We want: ktime_get_ns() + __gtod_offset == sched_clock() + __sched_clock_offset
  */
-__read_mostly u64 __sched_clock_offset;
+__asi_not_sensitive u64 __sched_clock_offset;
 static __read_mostly u64 __gtod_offset;
 
 struct sched_clock_data {

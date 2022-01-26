@@ -9651,7 +9651,7 @@ static int perf_swevent_init(struct perf_event *event)
 	return 0;
 }
 
-static struct pmu perf_swevent = {
+static struct pmu perf_swevent __asi_not_sensitive = {
 	.task_ctx_nr	= perf_sw_context,
 
 	.capabilities	= PERF_PMU_CAP_NO_NMI,
@@ -9800,7 +9800,7 @@ static int perf_tp_event_init(struct perf_event *event)
 	return 0;
 }
 
-static struct pmu perf_tracepoint = {
+static struct pmu perf_tracepoint __asi_not_sensitive = {
 	.task_ctx_nr	= perf_sw_context,
 
 	.event_init	= perf_tp_event_init,

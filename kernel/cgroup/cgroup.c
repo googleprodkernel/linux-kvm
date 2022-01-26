@@ -162,7 +162,8 @@ static struct static_key_true *cgroup_subsys_on_dfl_key[] = {
 static DEFINE_PER_CPU(struct cgroup_rstat_cpu, cgrp_dfl_root_rstat_cpu);
 
 /* the default hierarchy */
-struct cgroup_root cgrp_dfl_root = { .cgrp.rstat_cpu = &cgrp_dfl_root_rstat_cpu };
+struct cgroup_root cgrp_dfl_root __asi_not_sensitive =
+        { .cgrp.rstat_cpu = &cgrp_dfl_root_rstat_cpu };
 EXPORT_SYMBOL_GPL(cgrp_dfl_root);
 
 /*
@@ -755,7 +756,7 @@ EXPORT_SYMBOL_GPL(of_css);
  * reference-counted, to improve performance when child cgroups
  * haven't been created.
  */
-struct css_set init_css_set = {
+struct css_set init_css_set __asi_not_sensitive  = {
 	.refcount		= REFCOUNT_INIT(1),
 	.dom_cset		= &init_css_set,
 	.tasks			= LIST_HEAD_INIT(init_css_set.tasks),

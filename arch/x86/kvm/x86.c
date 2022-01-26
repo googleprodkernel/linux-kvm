@@ -123,7 +123,7 @@ static int sync_regs(struct kvm_vcpu *vcpu);
 static int __set_sregs2(struct kvm_vcpu *vcpu, struct kvm_sregs2 *sregs2);
 static void __get_sregs2(struct kvm_vcpu *vcpu, struct kvm_sregs2 *sregs2);
 
-struct kvm_x86_ops kvm_x86_ops __read_mostly;
+struct kvm_x86_ops kvm_x86_ops __asi_not_sensitive_readmostly;
 EXPORT_SYMBOL_GPL(kvm_x86_ops);
 
 #define KVM_X86_OP(func)					     \
@@ -148,17 +148,17 @@ module_param(min_timer_period_us, uint, S_IRUGO | S_IWUSR);
 static bool __read_mostly kvmclock_periodic_sync = true;
 module_param(kvmclock_periodic_sync, bool, S_IRUGO);
 
-bool __read_mostly kvm_has_tsc_control;
+bool __asi_not_sensitive_readmostly kvm_has_tsc_control;
 EXPORT_SYMBOL_GPL(kvm_has_tsc_control);
-u32  __read_mostly kvm_max_guest_tsc_khz;
+u32  __asi_not_sensitive_readmostly kvm_max_guest_tsc_khz;
 EXPORT_SYMBOL_GPL(kvm_max_guest_tsc_khz);
-u8   __read_mostly kvm_tsc_scaling_ratio_frac_bits;
+u8   __asi_not_sensitive_readmostly kvm_tsc_scaling_ratio_frac_bits;
 EXPORT_SYMBOL_GPL(kvm_tsc_scaling_ratio_frac_bits);
-u64  __read_mostly kvm_max_tsc_scaling_ratio;
+u64  __asi_not_sensitive_readmostly kvm_max_tsc_scaling_ratio;
 EXPORT_SYMBOL_GPL(kvm_max_tsc_scaling_ratio);
-u64 __read_mostly kvm_default_tsc_scaling_ratio;
+u64 __asi_not_sensitive_readmostly kvm_default_tsc_scaling_ratio;
 EXPORT_SYMBOL_GPL(kvm_default_tsc_scaling_ratio);
-bool __read_mostly kvm_has_bus_lock_exit;
+bool __asi_not_sensitive_readmostly kvm_has_bus_lock_exit;
 EXPORT_SYMBOL_GPL(kvm_has_bus_lock_exit);
 
 /* tsc tolerance in parts per million - default to 1/2 of the NTP threshold */
@@ -171,20 +171,20 @@ module_param(tsc_tolerance_ppm, uint, S_IRUGO | S_IWUSR);
  * advancement entirely.  Any other value is used as-is and disables adaptive
  * tuning, i.e. allows privileged userspace to set an exact advancement time.
  */
-static int __read_mostly lapic_timer_advance_ns = -1;
+static int __asi_not_sensitive_readmostly lapic_timer_advance_ns = -1;
 module_param(lapic_timer_advance_ns, int, S_IRUGO | S_IWUSR);
 
-static bool __read_mostly vector_hashing = true;
+static bool __asi_not_sensitive_readmostly vector_hashing = true;
 module_param(vector_hashing, bool, S_IRUGO);
 
-bool __read_mostly enable_vmware_backdoor = false;
+bool __asi_not_sensitive_readmostly enable_vmware_backdoor = false;
 module_param(enable_vmware_backdoor, bool, S_IRUGO);
 EXPORT_SYMBOL_GPL(enable_vmware_backdoor);
 
-static bool __read_mostly force_emulation_prefix = false;
+static bool __asi_not_sensitive_readmostly force_emulation_prefix = false;
 module_param(force_emulation_prefix, bool, S_IRUGO);
 
-int __read_mostly pi_inject_timer = -1;
+int __asi_not_sensitive_readmostly pi_inject_timer = -1;
 module_param(pi_inject_timer, bint, S_IRUGO | S_IWUSR);
 
 /*
@@ -216,13 +216,14 @@ static struct kvm_user_return_msrs __percpu *user_return_msrs;
 u64 __read_mostly host_efer;
 EXPORT_SYMBOL_GPL(host_efer);
 
-bool __read_mostly allow_smaller_maxphyaddr = 0;
+bool __asi_not_sensitive_readmostly allow_smaller_maxphyaddr = 0;
 EXPORT_SYMBOL_GPL(allow_smaller_maxphyaddr);
 
-bool __read_mostly enable_apicv = true;
+bool __asi_not_sensitive_readmostly enable_apicv = true;
 EXPORT_SYMBOL_GPL(enable_apicv);
 
-u64 __read_mostly host_xss;
+/* TODO(oweisse): how dangerous is this variable, from a security standpoint? */
+u64 __asi_not_sensitive_readmostly host_xss;
 EXPORT_SYMBOL_GPL(host_xss);
 u64 __read_mostly supported_xss;
 EXPORT_SYMBOL_GPL(supported_xss);
@@ -292,7 +293,7 @@ const struct kvm_stats_header kvm_vcpu_stats_header = {
 		       sizeof(kvm_vcpu_stats_desc),
 };
 
-u64 __read_mostly host_xcr0;
+u64 __asi_not_sensitive_readmostly host_xcr0;
 u64 __read_mostly supported_xcr0;
 EXPORT_SYMBOL_GPL(supported_xcr0);
 
@@ -2077,7 +2078,7 @@ struct pvclock_gtod_data {
 	u64		wall_time_sec;
 };
 
-static struct pvclock_gtod_data pvclock_gtod_data;
+static struct pvclock_gtod_data pvclock_gtod_data __asi_not_sensitive;
 
 static void update_pvclock_gtod(struct timekeeper *tk)
 {

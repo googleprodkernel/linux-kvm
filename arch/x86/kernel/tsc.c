@@ -30,10 +30,10 @@
 #include <asm/i8259.h>
 #include <asm/uv/uv.h>
 
-unsigned int __read_mostly cpu_khz;	/* TSC clocks / usec, not used here */
+unsigned int __asi_not_sensitive_readmostly cpu_khz;	/* TSC clocks / usec, not used here */
 EXPORT_SYMBOL(cpu_khz);
 
-unsigned int __read_mostly tsc_khz;
+unsigned int __asi_not_sensitive_readmostly tsc_khz;
 EXPORT_SYMBOL(tsc_khz);
 
 #define KHZ	1000
@@ -41,7 +41,7 @@ EXPORT_SYMBOL(tsc_khz);
 /*
  * TSC can be unstable due to cpufreq or due to unsynced TSCs
  */
-static int __read_mostly tsc_unstable;
+static int __asi_not_sensitive_readmostly tsc_unstable;
 static unsigned int __initdata tsc_early_khz;
 
 static DEFINE_STATIC_KEY_FALSE(__use_tsc);
@@ -1146,7 +1146,7 @@ static struct clocksource clocksource_tsc_early = {
  * this one will immediately take over. We will only register if TSC has
  * been found good.
  */
-static struct clocksource clocksource_tsc = {
+static struct clocksource clocksource_tsc __asi_not_sensitive = {
 	.name			= "tsc",
 	.rating			= 300,
 	.read			= read_tsc,

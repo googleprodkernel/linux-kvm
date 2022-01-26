@@ -3,6 +3,7 @@
 #define _LINUX_SCHED_SYSCTL_H
 
 #include <linux/types.h>
+#include <asm/asi.h>
 
 struct ctl_table;
 

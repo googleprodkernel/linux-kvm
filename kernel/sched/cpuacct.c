@@ -50,7 +50,7 @@ static inline struct cpuacct *parent_ca(struct cpuacct *ca)
 }
 
 static DEFINE_PER_CPU(struct cpuacct_usage, root_cpuacct_cpuusage);
-static struct cpuacct root_cpuacct = {
+static struct cpuacct root_cpuacct __asi_not_sensitive = {
 	.cpustat	= &kernel_cpustat,
 	.cpuusage	= &root_cpuacct_cpuusage,
 };

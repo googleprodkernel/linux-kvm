@@ -24,10 +24,10 @@
  * 1) mem_section	- memory sections, mem_map's for valid memory
  */
 #ifdef CONFIG_SPARSEMEM_EXTREME
-struct mem_section **mem_section;
+struct mem_section **mem_section __asi_not_sensitive;
 #else
 struct mem_section mem_section[NR_SECTION_ROOTS][SECTIONS_PER_ROOT]
-	____cacheline_internodealigned_in_smp;
+	____cacheline_internodealigned_in_smp __asi_not_sensitive;
 #endif
 EXPORT_SYMBOL(mem_section);
 

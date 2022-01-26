@@ -33,7 +33,7 @@ u64 __read_mostly shadow_mmio_mask;
 u64 __read_mostly shadow_mmio_access_mask;
 u64 __read_mostly shadow_present_mask;
 u64 __read_mostly shadow_me_mask;
-u64 __read_mostly shadow_acc_track_mask;
+u64 __asi_not_sensitive_readmostly shadow_acc_track_mask;
 
 u64 __read_mostly shadow_nonpresent_or_rsvd_mask;
 u64 __read_mostly shadow_nonpresent_or_rsvd_lower_gfn_mask;

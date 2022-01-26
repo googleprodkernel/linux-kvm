@@ -57,7 +57,7 @@
 
 /* Variables and functions for calc_load */
 atomic_long_t calc_load_tasks;
-unsigned long calc_load_update;
+unsigned long calc_load_update __asi_not_sensitive;
 unsigned long avenrun[3];
 EXPORT_SYMBOL(avenrun); /* should be removed */
 

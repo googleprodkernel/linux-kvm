@@ -183,7 +183,7 @@ unsigned long totalreserve_pages __read_mostly;
 unsigned long totalcma_pages __read_mostly;
 
 int percpu_pagelist_high_fraction;
-gfp_t gfp_allowed_mask __read_mostly = GFP_BOOT_MASK;
+gfp_t gfp_allowed_mask __asi_not_sensitive_readmostly = GFP_BOOT_MASK;
 DEFINE_STATIC_KEY_MAYBE(CONFIG_INIT_ON_ALLOC_DEFAULT_ON, init_on_alloc);
 EXPORT_SYMBOL(init_on_alloc);
 

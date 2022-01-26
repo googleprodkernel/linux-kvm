@@ -64,7 +64,7 @@
 #include <trace/events/lock.h>
 
 #ifdef CONFIG_PROVE_LOCKING
-int prove_locking = 1;
+int prove_locking __asi_not_sensitive = 1;
 module_param(prove_locking, int, 0644);
 #else
 #define prove_locking 0
@@ -186,8 +186,8 @@ unsigned long nr_zapped_classes;
 #ifndef CONFIG_DEBUG_LOCKDEP
 static
 #endif
-struct lock_class lock_classes[MAX_LOCKDEP_KEYS];
-static DECLARE_BITMAP(lock_classes_in_use, MAX_LOCKDEP_KEYS);
+struct lock_class lock_classes[MAX_LOCKDEP_KEYS] __asi_not_sensitive;
+static DECLARE_BITMAP(lock_classes_in_use, MAX_LOCKDEP_KEYS) __asi_not_sensitive;
 
 static inline struct lock_class *hlock_class(struct held_lock *hlock)
 {
@@ -389,7 +389,7 @@ static struct hlist_head classhash_table[CLASSHASH_SIZE];
 #define __chainhashfn(chain)	hash_long(chain, CHAINHASH_BITS)
 #define chainhashentry(chain)	(chainhash_table + __chainhashfn((chain)))
 
-static struct hlist_head chainhash_table[CHAINHASH_SIZE];
+static struct hlist_head chainhash_table[CHAINHASH_SIZE] __asi_not_sensitive;
 
 /*
  * the id of held_lock
@@ -599,7 +599,7 @@ u64 lockdep_stack_hash_count(void)
 unsigned int nr_hardirq_chains;
 unsigned int nr_softirq_chains;
 unsigned int nr_process_chains;
-unsigned int max_lockdep_depth;
+unsigned int max_lockdep_depth __asi_not_sensitive;
 
 #ifdef CONFIG_DEBUG_LOCKDEP
 /*
@@ -3225,8 +3225,8 @@ out_bug:
 	return 0;
 }
 
-struct lock_chain lock_chains[MAX_LOCKDEP_CHAINS];
-static DECLARE_BITMAP(lock_chains_in_use, MAX_LOCKDEP_CHAINS);
+struct lock_chain lock_chains[MAX_LOCKDEP_CHAINS] __asi_not_sensitive;
+static DECLARE_BITMAP(lock_chains_in_use, MAX_LOCKDEP_CHAINS) __asi_not_sensitive;
 static u16 chain_hlocks[MAX_LOCKDEP_CHAIN_HLOCKS];
 unsigned long nr_zapped_lock_chains;
 unsigned int nr_free_chain_hlocks;	/* Free chain_hlocks in buckets */

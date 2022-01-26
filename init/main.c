@@ -123,7 +123,7 @@ extern void radix_tree_init(void);
  * operations which are not allowed with IRQ disabled are allowed while the
  * flag is set.
  */
-bool early_boot_irqs_disabled __read_mostly;
+bool early_boot_irqs_disabled __asi_not_sensitive;
 
 enum system_states system_state __read_mostly;
 EXPORT_SYMBOL(system_state);

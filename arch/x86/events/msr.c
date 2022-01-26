@@ -280,7 +280,7 @@ static int msr_event_add(struct perf_event *event, int flags)
 	return 0;
 }
 
-static struct pmu pmu_msr = {
+static struct pmu pmu_msr  __asi_not_sensitive = {
 	.task_ctx_nr	= perf_sw_context,
 	.attr_groups	= attr_groups,
 	.event_init	= msr_event_init,

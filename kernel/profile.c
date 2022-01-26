@@ -44,10 +44,10 @@ static atomic_t *prof_buffer;
 static unsigned long prof_len;
 static unsigned short int prof_shift;
 
-int prof_on __read_mostly;
+int prof_on __asi_not_sensitive_readmostly;
 EXPORT_SYMBOL_GPL(prof_on);
 
-static cpumask_var_t prof_cpu_mask;
+static cpumask_var_t prof_cpu_mask __asi_not_sensitive;
 #if defined(CONFIG_SMP) && defined(CONFIG_PROC_FS)
 static DEFINE_PER_CPU(struct profile_hit *[2], cpu_profile_hits);
 static DEFINE_PER_CPU(int, cpu_profile_flip);

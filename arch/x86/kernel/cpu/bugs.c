@@ -46,7 +46,7 @@ static void __init srbds_select_mitigation(void);
 static void __init l1d_flush_select_mitigation(void);
 
 /* The base value of the SPEC_CTRL MSR that always has to be preserved. */
-u64 x86_spec_ctrl_base;
+u64 x86_spec_ctrl_base __asi_not_sensitive;
 EXPORT_SYMBOL_GPL(x86_spec_ctrl_base);
 static DEFINE_MUTEX(spec_ctrl_mutex);
 

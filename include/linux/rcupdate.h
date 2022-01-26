@@ -84,7 +84,7 @@ static inline int rcu_preempt_depth(void)
 
 /* Internal to kernel */
 void rcu_init(void);
-extern int rcu_scheduler_active __read_mostly;
+extern int rcu_scheduler_active;
 void rcu_sched_clock_irq(int user);
 void rcu_report_dead(unsigned int cpu);
 void rcutree_migrate_callbacks(int cpu);
@@ -308,6 +308,8 @@ static inline int rcu_read_lock_any_held(void)
 
 #ifdef CONFIG_PROVE_RCU
 
+/* TODO: ASI - (oweisse) we might want to switch ".data.unlikely" to some other
+ * section that will be mapped to ASI. */
 /**
  * RCU_LOCKDEP_WARN - emit lockdep splat if specified condition is met
  * @c: condition to check

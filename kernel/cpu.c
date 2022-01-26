@@ -2581,26 +2581,26 @@ const DECLARE_BITMAP(cpu_all_bits, NR_CPUS) = CPU_BITS_ALL;
 EXPORT_SYMBOL(cpu_all_bits);
 
 #ifdef CONFIG_INIT_ALL_POSSIBLE
-struct cpumask __cpu_possible_mask __read_mostly
+struct cpumask __cpu_possible_mask __asi_not_sensitive_readmostly
 	= {CPU_BITS_ALL};
 #else
-struct cpumask __cpu_possible_mask __read_mostly;
+struct cpumask __cpu_possible_mask __asi_not_sensitive_readmostly;
 #endif
 EXPORT_SYMBOL(__cpu_possible_mask);
 
-struct cpumask __cpu_online_mask __read_mostly;
+struct cpumask __cpu_online_mask __asi_not_sensitive_readmostly;
 EXPORT_SYMBOL(__cpu_online_mask);
 
-struct cpumask __cpu_present_mask __read_mostly;
+struct cpumask __cpu_present_mask __asi_not_sensitive_readmostly;
 EXPORT_SYMBOL(__cpu_present_mask);
 
-struct cpumask __cpu_active_mask __read_mostly;
+struct cpumask __cpu_active_mask __asi_not_sensitive_readmostly;
 EXPORT_SYMBOL(__cpu_active_mask);
 
-struct cpumask __cpu_dying_mask __read_mostly;
+struct cpumask __cpu_dying_mask __asi_not_sensitive_readmostly;
 EXPORT_SYMBOL(__cpu_dying_mask);
 
-atomic_t __num_online_cpus __read_mostly;
+atomic_t __num_online_cpus __asi_not_sensitive_readmostly;
 EXPORT_SYMBOL(__num_online_cpus);
 
 void init_cpu_present(const struct cpumask *src)

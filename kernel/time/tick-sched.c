@@ -49,7 +49,7 @@ struct tick_sched *tick_get_tick_sched(int cpu)
  * jiffies_lock and jiffies_seq. tick_nohz_next_event() needs to get a
  * consistent view of jiffies and last_jiffies_update.
  */
-static ktime_t last_jiffies_update;
+static ktime_t last_jiffies_update __asi_not_sensitive;
 
 /*
  * Must be called with interrupts disabled !

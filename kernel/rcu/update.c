@@ -243,7 +243,7 @@ core_initcall(rcu_set_runtime_mode);
 
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 static struct lock_class_key rcu_lock_key;
-struct lockdep_map rcu_lock_map = {
+struct lockdep_map rcu_lock_map __asi_not_sensitive = {
 	.name = "rcu_read_lock",
 	.key = &rcu_lock_key,
 	.wait_type_outer = LD_WAIT_FREE,
@@ -494,7 +494,7 @@ EXPORT_SYMBOL_GPL(rcutorture_sched_setaffinity);
 #ifdef CONFIG_RCU_STALL_COMMON
 int rcu_cpu_stall_ftrace_dump __read_mostly;
 module_param(rcu_cpu_stall_ftrace_dump, int, 0644);
-int rcu_cpu_stall_suppress __read_mostly; // !0 = suppress stall warnings.
+int rcu_cpu_stall_suppress __asi_not_sensitive_readmostly; // !0 = suppress stall warnings.
 EXPORT_SYMBOL_GPL(rcu_cpu_stall_suppress);
 module_param(rcu_cpu_stall_suppress, int, 0644);
 int rcu_cpu_stall_timeout __read_mostly = CONFIG_RCU_CPU_STALL_TIMEOUT;

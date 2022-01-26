@@ -13,7 +13,7 @@
 #include <linux/kthread.h>
 
 /* total number of freezing conditions in effect */
-atomic_t system_freezing_cnt = ATOMIC_INIT(0);
+atomic_t __asi_not_sensitive system_freezing_cnt = ATOMIC_INIT(0);
 EXPORT_SYMBOL(system_freezing_cnt);
 
 /* indicate whether PM freezing is in effect, protected by

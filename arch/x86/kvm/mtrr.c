@@ -138,7 +138,7 @@ struct fixed_mtrr_segment {
 	int range_start;
 };
 
-static struct fixed_mtrr_segment fixed_seg_table[] = {
+static struct fixed_mtrr_segment fixed_seg_table[] __asi_not_sensitive = {
 	/* MSR_MTRRfix64K_00000, 1 unit. 64K fixed mtrr. */
 	{
 		.start = 0x0,

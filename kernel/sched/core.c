@@ -76,9 +76,9 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
  * Limited because this is done with IRQs disabled.
  */
 #ifdef CONFIG_PREEMPT_RT
-const_debug unsigned int sysctl_sched_nr_migrate = 8;
+unsigned int sysctl_sched_nr_migrate __asi_not_sensitive_readmostly = 8;
 #else
-const_debug unsigned int sysctl_sched_nr_migrate = 32;
+unsigned int sysctl_sched_nr_migrate __asi_not_sensitive_readmostly = 32;
 #endif
 
 /*
@@ -9254,7 +9254,7 @@ int in_sched_functions(unsigned long addr)
  * Default task group.
  * Every task in system belongs to this group at bootup.
  */
-struct task_group root_task_group;
+struct task_group root_task_group __asi_not_sensitive;
 LIST_HEAD(task_groups);
 
 /* Cacheline aligned slab cache for task_group */

@@ -189,7 +189,7 @@ static struct event_constraint intel_slm_event_constraints[] __read_mostly =
 	EVENT_CONSTRAINT_END
 };
 
-static struct event_constraint intel_skl_event_constraints[] = {
+static struct event_constraint intel_skl_event_constraints[] __asi_not_sensitive = {
 	FIXED_EVENT_CONSTRAINT(0x00c0, 0),	/* INST_RETIRED.ANY */
 	FIXED_EVENT_CONSTRAINT(0x003c, 1),	/* CPU_CLK_UNHALTED.CORE */
 	FIXED_EVENT_CONSTRAINT(0x0300, 2),	/* CPU_CLK_UNHALTED.REF */

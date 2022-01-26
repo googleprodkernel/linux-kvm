@@ -116,7 +116,7 @@ static struct resource bss_resource = {
 struct cpuinfo_x86 new_cpu_data;
 
 /* Common CPU data for all CPUs */
-struct cpuinfo_x86 boot_cpu_data __read_mostly;
+struct cpuinfo_x86 boot_cpu_data __asi_not_sensitive_readmostly;
 EXPORT_SYMBOL(boot_cpu_data);
 
 unsigned int def_to_bigsmp;
@@ -133,7 +133,7 @@ struct ist_info ist_info;
 #endif
 
 #else
-struct cpuinfo_x86 boot_cpu_data __read_mostly;
+struct cpuinfo_x86 boot_cpu_data __asi_not_sensitive_readmostly;
 EXPORT_SYMBOL(boot_cpu_data);
 #endif
 

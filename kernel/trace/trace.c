@@ -432,7 +432,7 @@ EXPORT_SYMBOL_GPL(unregister_ftrace_export);
  * The global_trace is the descriptor that holds the top-level tracing
  * buffers for the live tracing.
  */
-static struct trace_array global_trace = {
+static struct trace_array global_trace __asi_not_sensitive = {
 	.trace_flags = TRACE_DEFAULT_FLAGS,
 };
 

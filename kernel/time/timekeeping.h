@@ -26,7 +26,7 @@ extern void update_process_times(int user);
 extern void do_timer(unsigned long ticks);
 extern void update_wall_time(void);
 
-extern raw_spinlock_t jiffies_lock;
+extern __asi_not_sensitive raw_spinlock_t jiffies_lock;
 extern seqcount_raw_spinlock_t jiffies_seq;
 
 #define CS_NAME_LEN	32

@@ -44,7 +44,7 @@
 
 #include "perf_event.h"
 
-struct x86_pmu x86_pmu __read_mostly;
+struct x86_pmu x86_pmu __asi_not_sensitive_readmostly;
 static struct pmu pmu;
 
 DEFINE_PER_CPU(struct cpu_hw_events, cpu_hw_events) = {
@@ -2685,7 +2685,7 @@ static int x86_pmu_filter_match(struct perf_event *event)
 	return 1;
 }
 
-static struct pmu pmu = {
+static struct pmu pmu __asi_not_sensitive = {
 	.pmu_enable		= x86_pmu_enable,
 	.pmu_disable		= x86_pmu_disable,
 

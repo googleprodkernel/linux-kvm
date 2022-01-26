@@ -75,7 +75,7 @@ EXPORT_SYMBOL(ignore_console_lock_warning);
  * Low level drivers may need that to know if they can schedule in
  * their unblank() callback or not. So let's export it.
  */
-int oops_in_progress;
+int oops_in_progress __asi_not_sensitive;
 EXPORT_SYMBOL(oops_in_progress);
 
 /*
@@ -2001,7 +2001,7 @@ static u8 *__printk_recursion_counter(void)
 		local_irq_restore(flags);		\
 	} while (0)
 
-int printk_delay_msec __read_mostly;
+int printk_delay_msec __asi_not_sensitive_readmostly;
 
 static inline void printk_delay(void)
 {

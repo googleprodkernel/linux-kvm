@@ -6,13 +6,13 @@
 
 #include "lapic.h"
 
-extern bool __read_mostly enable_vpid;
-extern bool __read_mostly flexpriority_enabled;
-extern bool __read_mostly enable_ept;
-extern bool __read_mostly enable_unrestricted_guest;
-extern bool __read_mostly enable_ept_ad_bits;
-extern bool __read_mostly enable_pml;
-extern int __read_mostly pt_mode;
+extern bool __asi_not_sensitive_readmostly enable_vpid;
+extern bool __asi_not_sensitive_readmostly flexpriority_enabled;
+extern bool __asi_not_sensitive_readmostly enable_ept;
+extern bool __asi_not_sensitive_readmostly enable_unrestricted_guest;
+extern bool __asi_not_sensitive_readmostly enable_ept_ad_bits;
+extern bool __asi_not_sensitive_readmostly enable_pml;
+extern int __asi_not_sensitive_readmostly pt_mode;
 
 #define PT_MODE_SYSTEM		0
 #define PT_MODE_HOST_GUEST	1

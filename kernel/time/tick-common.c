@@ -31,7 +31,7 @@ DEFINE_PER_CPU(struct tick_device, tick_cpu_device);
  * CPU which handles the tick and protected by jiffies_lock. There is
  * no requirement to write hold the jiffies seqcount for it.
  */
-ktime_t tick_next_period;
+ktime_t tick_next_period __asi_not_sensitive;
 
 /*
  * tick_do_timer_cpu is a timer core internal variable which holds the CPU NR
@@ -47,7 +47,7 @@ ktime_t tick_next_period;
  *    at it will take over and keep the time keeping alive.  The handover
  *    procedure also covers cpu hotplug.
  */
-int tick_do_timer_cpu __read_mostly = TICK_DO_TIMER_BOOT;
+int tick_do_timer_cpu __asi_not_sensitive_readmostly = TICK_DO_TIMER_BOOT;
 #ifdef CONFIG_NO_HZ_FULL
 /*
  * tick_do_timer_boot_cpu indicates the boot CPU temporarily owns

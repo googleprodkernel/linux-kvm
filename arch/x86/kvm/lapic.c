@@ -60,7 +60,7 @@
 #define MAX_APIC_VECTOR			256
 #define APIC_VECTORS_PER_REG		32
 
-static bool lapic_timer_advance_dynamic __read_mostly;
+static bool lapic_timer_advance_dynamic __asi_not_sensitive_readmostly;
 #define LAPIC_TIMER_ADVANCE_ADJUST_MIN	100	/* clock cycles */
 #define LAPIC_TIMER_ADVANCE_ADJUST_MAX	10000	/* clock cycles */
 #define LAPIC_TIMER_ADVANCE_NS_INIT	1000

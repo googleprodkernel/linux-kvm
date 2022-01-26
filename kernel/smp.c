@@ -1070,7 +1070,7 @@ static int __init maxcpus(char *str)
 early_param("maxcpus", maxcpus);
 
 /* Setup number of possible processor ids */
-unsigned int nr_cpu_ids __read_mostly = NR_CPUS;
+unsigned int nr_cpu_ids __asi_not_sensitive = NR_CPUS;
 EXPORT_SYMBOL(nr_cpu_ids);
 
 /* An arch may set nr_cpu_ids earlier if needed, so this would be redundant */

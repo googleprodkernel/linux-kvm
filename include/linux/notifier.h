@@ -117,7 +117,7 @@ extern void srcu_init_notifier_head(struct srcu_notifier_head *nh);
 	struct blocking_notifier_head name =			\
 		BLOCKING_NOTIFIER_INIT(name)
 #define RAW_NOTIFIER_HEAD(name)					\
-	struct raw_notifier_head name =				\
+	struct raw_notifier_head name __asi_not_sensitive =	\
 		RAW_NOTIFIER_INIT(name)
 
 #ifdef CONFIG_TREE_SRCU

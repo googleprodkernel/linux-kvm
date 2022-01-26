@@ -82,7 +82,7 @@ static DEFINE_PER_CPU_SHARED_ALIGNED(struct rcu_data, rcu_data) = {
 	.cblist.flags = SEGCBLIST_SOFTIRQ_ONLY,
 #endif
 };
-static struct rcu_state rcu_state = {
+static struct rcu_state rcu_state __asi_not_sensitive = {
 	.level = { &rcu_state.node[0] },
 	.gp_state = RCU_GP_IDLE,
 	.gp_seq = (0UL - 300UL) << RCU_SEQ_CTR_SHIFT,
@@ -98,7 +98,7 @@ static struct rcu_state rcu_state = {
 static bool dump_tree;
 module_param(dump_tree, bool, 0444);
 /* By default, use RCU_SOFTIRQ instead of rcuc kthreads. */
-static bool use_softirq = !IS_ENABLED(CONFIG_PREEMPT_RT);
+static __asi_not_sensitive bool use_softirq = !IS_ENABLED(CONFIG_PREEMPT_RT);
 #ifndef CONFIG_PREEMPT_RT
 module_param(use_softirq, bool, 0444);
 #endif
@@ -125,7 +125,7 @@ int rcu_num_nodes __read_mostly = NUM_RCU_NODES; /* Total # rcu_nodes in use. */
  * transitions from RCU_SCHEDULER_INIT to RCU_SCHEDULER_RUNNING after RCU
  * is fully initialized, including all of its kthreads having been spawned.
  */
-int rcu_scheduler_active __read_mostly;
+int rcu_scheduler_active __asi_not_sensitive;
 EXPORT_SYMBOL_GPL(rcu_scheduler_active);
 
 /*
@@ -140,7 +140,7 @@ EXPORT_SYMBOL_GPL(rcu_scheduler_active);
  * early boot to take responsibility for these callbacks, but one step at
  * a time.
  */
-static int rcu_scheduler_fully_active __read_mostly;
+static int rcu_scheduler_fully_active __asi_not_sensitive;
 
 static void rcu_report_qs_rnp(unsigned long mask, struct rcu_node *rnp,
 			      unsigned long gps, unsigned long flags);
@@ -470,7 +470,7 @@ module_param(qovld, long, 0444);
 
 static ulong jiffies_till_first_fqs = IS_ENABLED(CONFIG_RCU_STRICT_GRACE_PERIOD) ? 0 : ULONG_MAX;
 static ulong jiffies_till_next_fqs = ULONG_MAX;
-static bool rcu_kick_kthreads;
+static bool rcu_kick_kthreads __asi_not_sensitive;
 static int rcu_divisor = 7;
 module_param(rcu_divisor, int, 0644);
 

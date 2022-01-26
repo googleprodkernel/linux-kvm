@@ -31,7 +31,7 @@
 #include <asm/paravirt.h>
 #include <asm/asm-prototypes.h>
 
-int __read_mostly alternatives_patched;
+int __asi_not_sensitive alternatives_patched;
 
 EXPORT_SYMBOL_GPL(alternatives_patched);
 

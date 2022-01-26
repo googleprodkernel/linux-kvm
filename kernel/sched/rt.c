@@ -14,7 +14,7 @@ static const u64 max_rt_runtime = MAX_BW;
 
 static int do_sched_rt_period_timer(struct rt_bandwidth *rt_b, int overrun);
 
-struct rt_bandwidth def_rt_bandwidth;
+struct rt_bandwidth def_rt_bandwidth __asi_not_sensitive;
 
 static enum hrtimer_restart sched_rt_period_timer(struct hrtimer *timer)
 {

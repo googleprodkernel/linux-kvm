@@ -14,6 +14,7 @@
 #include <linux/export.h>
 #include <linux/spinlock.h>
 #include <linux/debug_locks.h>
+#include <asm/asi.h>
 
 /*
  * We want to turn all lock-debugging facilities on/off at once,
@@ -22,7 +23,7 @@
  * that would just muddy the log. So we report the first one and
  * shut up after that.
  */
-int debug_locks __read_mostly = 1;
+int debug_locks __asi_not_sensitive_readmostly = 1;
 EXPORT_SYMBOL_GPL(debug_locks);
 
 /*
@@ -30,7 +31,7 @@ EXPORT_SYMBOL_GPL(debug_locks);
  * 'silent failure': nothing is printed to the console when
  * a locking bug is detected.
  */
-int debug_locks_silent __read_mostly;
+int debug_locks_silent __asi_not_sensitive_readmostly;
 EXPORT_SYMBOL_GPL(debug_locks_silent);
 
 /*

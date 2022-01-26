@@ -151,7 +151,7 @@ extern u64 __read_mostly shadow_me_mask;
  * shadow_acc_track_mask is the set of bits to be cleared in non-accessed
  * pages.
  */
-extern u64 __read_mostly shadow_acc_track_mask;
+extern u64 __asi_not_sensitive_readmostly shadow_acc_track_mask;
 
 /*
  * This mask must be set on all non-zero Non-Present or Reserved SPTEs in order

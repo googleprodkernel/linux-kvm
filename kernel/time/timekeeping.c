@@ -39,7 +39,7 @@ enum timekeeping_adv_mode {
 	TK_ADV_FREQ
 };
 
-DEFINE_RAW_SPINLOCK(timekeeper_lock);
+__asi_not_sensitive DEFINE_RAW_SPINLOCK(timekeeper_lock);
 
 /*
  * The most important data for readout fits into a single 64 byte
@@ -48,14 +48,14 @@ DEFINE_RAW_SPINLOCK(timekeeper_lock);
 static struct {
 	seqcount_raw_spinlock_t	seq;
 	struct timekeeper	timekeeper;
-} tk_core ____cacheline_aligned = {
+} tk_core ____cacheline_aligned  __asi_not_sensitive = {
 	.seq = SEQCNT_RAW_SPINLOCK_ZERO(tk_core.seq, &timekeeper_lock),
 };
 
-static struct timekeeper shadow_timekeeper;
+static struct timekeeper shadow_timekeeper __asi_not_sensitive;
 
 /* flag for if timekeeping is suspended */
-int __read_mostly timekeeping_suspended;
+int __asi_not_sensitive_readmostly timekeeping_suspended;
 
 /**
  * struct tk_fast - NMI safe timekeeper
@@ -72,7 +72,7 @@ struct tk_fast {
 };
 
 /* Suspend-time cycles value for halted fast timekeeper. */
-static u64 cycles_at_suspend;
+static u64 cycles_at_suspend __asi_not_sensitive;
 
 static u64 dummy_clock_read(struct clocksource *cs)
 {

@@ -31,13 +31,13 @@
 
 
 /* USER_HZ period (usecs): */
-unsigned long			tick_usec = USER_TICK_USEC;
+unsigned long			tick_usec __asi_not_sensitive = USER_TICK_USEC;
 
 /* SHIFTED_HZ period (nsecs): */
-unsigned long			tick_nsec;
+unsigned long			tick_nsec __asi_not_sensitive;
 
-static u64			tick_length;
-static u64			tick_length_base;
+static u64			tick_length __asi_not_sensitive;
+static u64			tick_length_base __asi_not_sensitive;
 
 #define SECS_PER_DAY		86400
 #define MAX_TICKADJ		500LL		/* usecs */
@@ -54,36 +54,36 @@ static u64			tick_length_base;
  *
  * (TIME_ERROR prevents overwriting the CMOS clock)
  */
-static int			time_state = TIME_OK;
+static int			time_state __asi_not_sensitive = TIME_OK;
 
 /* clock status bits:							*/
-static int			time_status = STA_UNSYNC;
+static int			time_status __asi_not_sensitive = STA_UNSYNC;
 
 /* time adjustment (nsecs):						*/
-static s64			time_offset;
+static s64			time_offset __asi_not_sensitive;
 
 /* pll time constant:							*/
-static long			time_constant = 2;
+static long			time_constant __asi_not_sensitive = 2;
 
 /* maximum error (usecs):						*/
-static long			time_maxerror = NTP_PHASE_LIMIT;
+static long			time_maxerror __asi_not_sensitive = NTP_PHASE_LIMIT;
 
 /* estimated error (usecs):						*/
-static long			time_esterror = NTP_PHASE_LIMIT;
+static long			time_esterror __asi_not_sensitive = NTP_PHASE_LIMIT;
 
 /* frequency offset (scaled nsecs/secs):				*/
-static s64			time_freq;
+static s64			time_freq __asi_not_sensitive;
 
 /* time at last adjustment (secs):					*/
-static time64_t		time_reftime;
+static time64_t		time_reftime __asi_not_sensitive;
 
-static long			time_adjust;
+static long			time_adjust __asi_not_sensitive;
 
 /* constant (boot-param configurable) NTP tick adjustment (upscaled)	*/
-static s64			ntp_tick_adj;
+static s64			ntp_tick_adj __asi_not_sensitive;
 
 /* second value of the next pending leapsecond, or TIME64_MAX if no leap */
-static time64_t			ntp_next_leap_sec = TIME64_MAX;
+static time64_t			ntp_next_leap_sec __asi_not_sensitive = TIME64_MAX;
 
 #ifdef CONFIG_NTP_PPS
 

@@ -40,7 +40,13 @@ static struct clocksource clocksource_jiffies = {
 	.max_cycles		= 10,
 };
 
-__cacheline_aligned_in_smp DEFINE_RAW_SPINLOCK(jiffies_lock);
+/* TODO(oweisse): __cacheline_aligned_in_smp is expanded to
+  __section__(".data..cacheline_aligned"))) which is at odds with
+ __asi_not_sensitive. We should consider instead using
+ __attribute__ ((__aligned__(XXX))) where XXX is a def for cacheline or
+ something*/
+/* __cacheline_aligned_in_smp */
+__asi_not_sensitive DEFINE_RAW_SPINLOCK(jiffies_lock);
 __cacheline_aligned_in_smp seqcount_raw_spinlock_t jiffies_seq =
 	SEQCNT_RAW_SPINLOCK_ZERO(jiffies_seq, &jiffies_lock);
 

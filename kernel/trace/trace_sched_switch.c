@@ -16,8 +16,8 @@
 #define RECORD_CMDLINE	1
 #define RECORD_TGID	2
 
-static int		sched_cmdline_ref;
-static int		sched_tgid_ref;
+static int		sched_cmdline_ref __asi_not_sensitive;
+static int		sched_tgid_ref __asi_not_sensitive;
 static DEFINE_MUTEX(sched_register_mutex);
 
 static void

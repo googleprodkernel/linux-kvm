@@ -17,8 +17,8 @@
 #undef pr_fmt
 #define pr_fmt(fmt)     "ASI: " fmt
 
-static struct asi_class asi_class[ASI_MAX_NUM];
-static DEFINE_SPINLOCK(asi_class_lock);
+static struct asi_class asi_class[ASI_MAX_NUM] __asi_not_sensitive;
+static DEFINE_SPINLOCK(asi_class_lock __asi_not_sensitive);
 
 DEFINE_PER_CPU_ALIGNED(struct asi_state, asi_cpu_state);
 EXPORT_PER_CPU_SYMBOL_GPL(asi_cpu_state);

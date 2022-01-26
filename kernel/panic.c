@@ -56,7 +56,7 @@ int panic_on_warn __read_mostly;
 unsigned long panic_on_taint;
 bool panic_on_taint_nousertaint = false;
 
-int panic_timeout = CONFIG_PANIC_TIMEOUT;
+int panic_timeout __asi_not_sensitive = CONFIG_PANIC_TIMEOUT;
 EXPORT_SYMBOL_GPL(panic_timeout);
 
 #define PANIC_PRINT_TASK_INFO		0x00000001

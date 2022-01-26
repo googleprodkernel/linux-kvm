@@ -1020,7 +1020,7 @@ static struct perf_pmu_format_hybrid_attr format_attr_hybrid_##_name = {\
 }
 
 struct pmu *x86_get_pmu(unsigned int cpu);
-extern struct x86_pmu x86_pmu __read_mostly;
+extern struct x86_pmu x86_pmu __asi_not_sensitive_readmostly;
 
 static __always_inline struct x86_perf_task_context_opt *task_context_opt(void *ctx)
 {
