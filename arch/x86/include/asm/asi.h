@@ -177,6 +177,18 @@ static inline pgd_t *asi_pgd(struct asi *asi)
 	return asi->pgd;
 }
 
+/* IMPORTANT: Any modification to the name here should also be applied to
+ * include/asm-generic/vmlinux.lds.h */
+#define ASI_NON_SENSITIVE_SECTION_NAME ".data..asi_non_sensitive"
+#define ASI_NON_SENSITIVE_READ_MOSTLY_SECTION_NAME \
+                       ".data..asi_non_sensitive_readmostly"
+
+#define __asi_not_sensitive \
+    __section(ASI_NON_SENSITIVE_SECTION_NAME)
+
+#define __asi_not_sensitive_readmostly \
+    __section(ASI_NON_SENSITIVE_READ_MOSTLY_SECTION_NAME)
+
 #else	/* CONFIG_ADDRESS_SPACE_ISOLATION */
 
 static inline void asi_intr_enter(void) { }

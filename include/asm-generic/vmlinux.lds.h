@@ -374,10 +374,26 @@
 	. = ALIGN(PAGE_SIZE);						\
 	__nosave_end = .;
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+#define ASI_NOT_SENSITIVE_DATA(page_align)                              \
+       . = ALIGN(page_align);                                           \
+       __start_asi_nonsensitive = .;                                    \
+       *(.data..asi_non_sensitive)                                      \
+       . = ALIGN(page_align);                                           \
+       __end_asi_nonsensitive = .;                                      \
+       __start_asi_nonsensitive_readmostly = .;                         \
+       *(.data..asi_non_sensitive_readmostly)                           \
+       . = ALIGN(page_align);                                           \
+       __end_asi_nonsensitive_readmostly = .;
+#else
+#define ASI_NOT_SENSITIVE_DATA
+#endif
+
 #define PAGE_ALIGNED_DATA(page_align)					\
 	. = ALIGN(page_align);						\
 	*(.data..page_aligned)						\
-	. = ALIGN(page_align);
+	. = ALIGN(page_align);                                          \
+        ASI_NOT_SENSITIVE_DATA(page_align)
 
 #define READ_MOSTLY_DATA(align)						\
 	. = ALIGN(align);						\

@@ -121,6 +121,12 @@ void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len) { }
 #define static_asi_enabled() false
 
 
+/* IMPORTANT: Any modification to the name here should also be applied to
+ * include/asm-generic/vmlinux.lds.h */
+
+#define __asi_not_sensitive
+#define __asi_not_sensitive_readmostly
+
 #endif  /* !_ASSEMBLY_ */
 
 #endif /* !CONFIG_ADDRESS_SPACE_ISOLATION */
