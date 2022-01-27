@@ -10122,6 +10122,12 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
 	vcpu->srcu_idx = srcu_read_lock(&kvm->srcu);
 	vcpu->arch.l1tf_flush_l1d = true;
 
+	/* We must have current->stack mapped into asi. This function can be
+	 * safely called many times, as it will only do the actual mapping once. */
+	r = asi_map_task_stack(current, vcpu->kvm->asi);
+	if (r != 0)
+		return r;
+
 	for (;;) {
 		if (kvm_vcpu_running(vcpu)) {
 			r = vcpu_enter_guest(vcpu);

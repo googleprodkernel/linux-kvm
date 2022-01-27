@@ -66,8 +66,13 @@ static inline struct asi *asi_get_target(void) { return NULL; }
 
 static inline struct asi *asi_get_current(void) { return NULL; }
 
-static inline
-int asi_map_gfp(struct asi *asi, void *addr, size_t len, gfp_t gfp_flags)
+static inline int asi_map_task_stack(struct task_struct *tsk, struct asi *asi)
+{ return 0; }
+
+static inline void asi_unmap_task_stack(struct task_struct *tsk) { }
+
+static inline int asi_map_gfp(struct asi *asi, void *addr, size_t len,
+			      gfp_t gfp_flags)
 {
 	return 0;
 }
@@ -129,6 +134,13 @@ static inline int asi_load_module(struct module* module) {return 0;}
 #define __asi_not_sensitive_readmostly
 
 static inline void asi_unload_module(struct module* module) { }
+
+static inline
+void asi_mark_pages_local_nonsensitive(struct page *pages, uint order,
+                                       struct mm_struct *mm) { }
+
+static inline
+void asi_clear_pages_local_nonsensitive(struct page *pages, uint order) { }
 
 #endif  /* !_ASSEMBLY_ */
 

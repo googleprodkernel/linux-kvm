@@ -67,6 +67,7 @@ struct sighand_struct;
 struct signal_struct;
 struct task_delay_info;
 struct task_group;
+struct asi;
 
 /*
  * Task state bitmask. NOTE! These bits are also
@@ -1468,6 +1469,10 @@ struct task_struct {
 					__mce_reserved : 62;
 	struct callback_head		mce_kill_me;
 	int				mce_count;
+#endif
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+        struct asi *asi_stack_mapped;
 #endif
 
 #ifdef CONFIG_KRETPROBES

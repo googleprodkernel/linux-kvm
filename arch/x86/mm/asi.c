@@ -1029,6 +1029,48 @@ void asi_unmap(struct asi *asi, void *addr, size_t len, bool flush_tlb)
 		asi_flush_tlb_range(asi, addr, len);
 }
 
+int asi_map_task_stack(struct task_struct *tsk, struct asi *asi)
+{
+        int ret;
+
+        /* If the stack is already mapped to asi - don't need to map it again. */
+        if (tsk->asi_stack_mapped)
+                return 0;
+
+        if (!tsk->mm)
+                return -EINVAL;
+
+	if (!static_asi_enabled() || !mm_asi_enabled(tsk->mm))
+		return 0;
+
+        /* If the stack was allocated via the page allocator, we assume the
+         * stack pages were marked with PageNonSensitive, therefore tsk->stack
+         * address is properly aliased. */
+        ret = asi_map(ASI_LOCAL_NONSENSITIVE, tsk->stack, THREAD_SIZE);
+        if (!ret) {
+		tsk->asi_stack_mapped = asi;
+		asi_sync_mapping(asi, tsk->stack, THREAD_SIZE);
+	}
+
+        return ret;
+}
+
+void asi_unmap_task_stack(struct task_struct *tsk)
+{
+        /* No need to unmap if the stack was not mapped to begin with. */
+        if (!tsk->asi_stack_mapped)
+                return;
+
+        if (!tsk->mm)
+                return;
+
+        asi_unmap(ASI_LOCAL_NONSENSITIVE, tsk->stack, THREAD_SIZE,
+                  /* flush_tlb = */ true);
+
+        tsk->asi_stack_mapped = NULL;
+}
+
+
 void *asi_va(unsigned long pa)
 {
 	struct page *page = pfn_to_page(PHYS_PFN(pa));
@@ -1336,3 +1378,23 @@ void asi_unmap_user(struct asi *asi, void *addr, size_t len)
 	}
 }
 EXPORT_SYMBOL_GPL(asi_unmap_user);
+
+void asi_mark_pages_local_nonsensitive(struct page *pages, uint order,
+                                       struct mm_struct *mm)
+{
+        uint i;
+        for (i = 0; i < (1 << order); i++) {
+                __SetPageLocalNonSensitive(pages + i);
+                pages[i].asi_mm = mm;
+	}
+}
+
+void asi_clear_pages_local_nonsensitive(struct page *pages, uint order)
+{
+        uint i;
+        for (i = 0; i < (1 << order); i++) {
+                __ClearPageLocalNonSensitive(pages + i);
+                pages[i].asi_mm = NULL;
+	}
+}
+

@@ -216,7 +216,6 @@ static int free_vm_stack_cache(unsigned int cpu)
 
 static unsigned long *alloc_thread_stack_node(struct task_struct *tsk, int node)
 {
-  /* TODO: (oweisse) Add annotation to map the stack into ASI */
 #ifdef CONFIG_VMAP_STACK
 	void *stack;
 	int i;
@@ -269,7 +268,16 @@ static unsigned long *alloc_thread_stack_node(struct task_struct *tsk, int node)
 	struct page *page = alloc_pages_node(node, THREADINFO_GFP,
 					     THREAD_SIZE_ORDER);
 
+        /* When marking pages as PageLocalNonSesitive we set the page->mm to be
+         * NULL. We must make sure the flag is cleared from the stack pages
+         * before free_pages is called. Otherwise, page->mm will be accessed
+         * which will reuslt in NULL reference. page_address() below will yield
+         * an aliased address after ASI_LOCAL_MAP, thanks to
+         * PageLocalNonSesitive flag. */
 	if (likely(page)) {
+                asi_mark_pages_local_nonsensitive(page,
+                                                  THREAD_SIZE_ORDER,
+                                                  NULL);
 		tsk->stack = kasan_reset_tag(page_address(page));
 		return tsk->stack;
 	}
@@ -300,6 +308,14 @@ static inline void free_thread_stack(struct task_struct *tsk)
 		return;
 	}
 #endif
+
+        /* We must clear the PageNonSensitive flag before calling free_pages().
+         * Otherwise page->mm (which is NULL) will be accessed, in order to
+         * unmap the pages from ASI. Specifically for the stack, we assume the
+         * pages were already unmapped from ASI before we got here, via
+         * asi_unmap_task_stack(). */
+        asi_clear_pages_local_nonsensitive(virt_to_page(tsk->stack),
+                                                        THREAD_SIZE_ORDER);
 
 	__free_pages(virt_to_page(tsk->stack), THREAD_SIZE_ORDER);
 }
@@ -436,6 +452,7 @@ static void release_task_stack(struct task_struct *tsk)
 	if (WARN_ON(READ_ONCE(tsk->__state) != TASK_DEAD))
 		return;  /* Better to leak the stack than to free prematurely */
 
+        asi_unmap_task_stack(tsk);
 	account_kernel_stack(tsk, -1);
 	free_thread_stack(tsk);
 	tsk->stack = NULL;
@@ -916,6 +933,9 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
 	 * functions again.
 	 */
 	tsk->stack = stack;
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	tsk->asi_stack_mapped = NULL;
+#endif
 #ifdef CONFIG_VMAP_STACK
 	tsk->stack_vm_area = stack_vm_area;
 #endif

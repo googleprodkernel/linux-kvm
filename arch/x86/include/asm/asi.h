@@ -87,6 +87,12 @@ void asi_unmap_user(struct asi *asi, void *va, size_t len);
 int  asi_fill_pgtbl_pool(struct asi_pgtbl_pool *pool, uint count, gfp_t flags);
 void asi_clear_pgtbl_pool(struct asi_pgtbl_pool *pool);
 
+int asi_map_task_stack(struct task_struct *tsk, struct asi *asi);
+void asi_unmap_task_stack(struct task_struct *tsk);
+void asi_mark_pages_local_nonsensitive(struct page *pages, uint order,
+                                       struct mm_struct *mm);
+void asi_clear_pages_local_nonsensitive(struct page *pages, uint order);
+
 static inline void asi_init_pgtbl_pool(struct asi_pgtbl_pool *pool)
 {
 	pool->pgtbl_list = NULL;

@@ -768,7 +768,7 @@ void __noreturn do_exit(long code)
 	profile_task_exit(tsk);
 	kcov_task_exit(tsk);
 
-        /* TODO: (oweisse) unmap the stack from ASI */
+	asi_unmap_task_stack(tsk);
 
 	coredump_task_exit(tsk);
 	ptrace_event(PTRACE_EVENT_EXIT, code);

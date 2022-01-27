@@ -69,6 +69,7 @@
 #include <linux/uaccess.h>
 #include <asm/mmu_context.h>
 #include <asm/tlb.h>
+#include <asm/asi.h>
 
 #include <trace/events/task.h>
 #include "internal.h"
@@ -1238,7 +1239,11 @@ int begin_new_exec(struct linux_binprm * bprm)
 	struct task_struct *me = current;
 	int retval;
 
-        /* TODO: (oweisse) unmap the stack from ASI */
+        /* The old mm is about to be released later on in exec_mmap. We are
+         * reusing the task, including its stack which was mapped to
+         * mm->asi_pgd[0]. We need to asi_unmap the stack, so the destructor of
+         * the mm won't complain on "lingering" asi mappings. */
+        asi_unmap_task_stack(current);
 
 	/* Once we are committed compute the creds */
 	retval = bprm_creds_from_file(bprm);
