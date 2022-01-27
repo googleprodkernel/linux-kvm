@@ -313,7 +313,7 @@ static void free_nested(struct kvm_vcpu *vcpu)
 	kvm_vcpu_unmap(vcpu, &vmx->nested.pi_desc_map, true);
 	vmx->nested.pi_desc = NULL;
 
-	kvm_mmu_free_roots(vcpu, &vcpu->arch.guest_mmu, KVM_MMU_ROOTS_ALL);
+	kvm_mmu_free_roots(vcpu, &vcpu->arch.private->guest_mmu, KVM_MMU_ROOTS_ALL);
 
 	nested_release_evmcs(vcpu);
 
@@ -356,11 +356,11 @@ static void nested_ept_invalidate_addr(struct kvm_vcpu *vcpu, gpa_t eptp,
 	WARN_ON_ONCE(!mmu_is_nested(vcpu));
 
 	for (i = 0; i < KVM_MMU_NUM_PREV_ROOTS; i++) {
-		cached_root = &vcpu->arch.mmu->prev_roots[i];
+		cached_root = &vcpu->arch.private->mmu->prev_roots[i];
 
 		if (nested_ept_root_matches(cached_root->hpa, cached_root->pgd,
 					    eptp))
-			vcpu->arch.mmu->invlpg(vcpu, addr, cached_root->hpa);
+			vcpu->arch.private->mmu->invlpg(vcpu, addr, cached_root->hpa);
 	}
 }
 
@@ -410,19 +410,19 @@ static void nested_ept_init_mmu_context(struct kvm_vcpu *vcpu)
 {
 	WARN_ON(mmu_is_nested(vcpu));
 
-	vcpu->arch.mmu = &vcpu->arch.guest_mmu;
+	vcpu->arch.private->mmu = &vcpu->arch.private->guest_mmu;
 	nested_ept_new_eptp(vcpu);
-	vcpu->arch.mmu->get_guest_pgd     = nested_ept_get_eptp;
-	vcpu->arch.mmu->inject_page_fault = nested_ept_inject_page_fault;
-	vcpu->arch.mmu->get_pdptr         = kvm_pdptr_read;
+	vcpu->arch.private->mmu->get_guest_pgd     = nested_ept_get_eptp;
+	vcpu->arch.private->mmu->inject_page_fault = nested_ept_inject_page_fault;
+	vcpu->arch.private->mmu->get_pdptr         = kvm_pdptr_read;
 
-	vcpu->arch.walk_mmu              = &vcpu->arch.nested_mmu;
+	vcpu->arch.private->walk_mmu              = &vcpu->arch.private->nested_mmu;
 }
 
 static void nested_ept_uninit_mmu_context(struct kvm_vcpu *vcpu)
 {
-	vcpu->arch.mmu = &vcpu->arch.root_mmu;
-	vcpu->arch.walk_mmu = &vcpu->arch.root_mmu;
+	vcpu->arch.private->mmu = &vcpu->arch.private->root_mmu;
+	vcpu->arch.private->walk_mmu = &vcpu->arch.private->root_mmu;
 }
 
 static bool nested_vmx_is_page_fault_vmexit(struct vmcs12 *vmcs12,
@@ -456,7 +456,7 @@ static int nested_vmx_check_exception(struct kvm_vcpu *vcpu, unsigned long *exit
 		}
 		if (nested_vmx_is_page_fault_vmexit(vmcs12,
 						    vcpu->arch.exception.error_code)) {
-			*exit_qual = has_payload ? payload : vcpu->arch.cr2;
+			*exit_qual = has_payload ? payload : vcpu->arch.private->cr2;
 			return 1;
 		}
 	} else if (vmcs12->exception_bitmap & (1u << nr)) {
@@ -1103,7 +1103,7 @@ static int nested_vmx_load_cr3(struct kvm_vcpu *vcpu, unsigned long cr3,
 	 * must not be dereferenced.
 	 */
 	if (reload_pdptrs && !nested_ept && is_pae_paging(vcpu) &&
-	    CC(!load_pdptrs(vcpu, vcpu->arch.walk_mmu, cr3))) {
+	    CC(!load_pdptrs(vcpu, vcpu->arch.private->walk_mmu, cr3))) {
 		*entry_failure_code = ENTRY_FAIL_PDPTE;
 		return -EINVAL;
 	}
@@ -1111,7 +1111,7 @@ static int nested_vmx_load_cr3(struct kvm_vcpu *vcpu, unsigned long cr3,
 	if (!nested_ept)
 		kvm_mmu_new_pgd(vcpu, cr3);
 
-	vcpu->arch.cr3 = cr3;
+	vcpu->arch.private->cr3 = cr3;
 	kvm_register_mark_available(vcpu, VCPU_EXREG_CR3);
 
 	/* Re-initialize the MMU, e.g. to pick up CR4 MMU role changes. */
@@ -2508,8 +2508,8 @@ static int prepare_vmcs02(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12,
 	 * trap. Note that CR0.TS also needs updating - we do this later.
 	 */
 	vmx_update_exception_bitmap(vcpu);
-	vcpu->arch.cr0_guest_owned_bits &= ~vmcs12->cr0_guest_host_mask;
-	vmcs_writel(CR0_GUEST_HOST_MASK, ~vcpu->arch.cr0_guest_owned_bits);
+	vcpu->arch.private->cr0_guest_owned_bits &= ~vmcs12->cr0_guest_host_mask;
+	vmcs_writel(CR0_GUEST_HOST_MASK, ~vcpu->arch.private->cr0_guest_owned_bits);
 
 	if (vmx->nested.nested_run_pending &&
 	    (vmcs12->vm_entry_controls & VM_ENTRY_LOAD_IA32_PAT)) {
@@ -2595,7 +2595,7 @@ static int prepare_vmcs02(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12,
 	}
 
 	if (!enable_ept)
-		vcpu->arch.walk_mmu->inject_page_fault = vmx_inject_page_fault_nested;
+		vcpu->arch.private->walk_mmu->inject_page_fault = vmx_inject_page_fault_nested;
 
 	if ((vmcs12->vm_entry_controls & VM_ENTRY_LOAD_IA32_PERF_GLOBAL_CTRL) &&
 	    WARN_ON_ONCE(kvm_set_msr(vcpu, MSR_CORE_PERF_GLOBAL_CTRL,
@@ -3070,7 +3070,7 @@ static int nested_vmx_check_vmentry_hw(struct kvm_vcpu *vcpu)
 		vmx->loaded_vmcs->host_state.cr4 = cr4;
 	}
 
-	vm_fail = __vmx_vcpu_run(vmx, (unsigned long *)&vcpu->arch.regs,
+	vm_fail = __vmx_vcpu_run(vmx, (unsigned long *)&vcpu->arch.private->regs,
 				 vmx->loaded_vmcs->launched);
 
 	if (vmx->msr_autoload.host.nr)
@@ -3153,7 +3153,7 @@ static bool nested_get_vmcs12_pages(struct kvm_vcpu *vcpu)
 		 * the guest CR3 might be restored prior to setting the nested
 		 * state which can lead to a load of wrong PDPTRs.
 		 */
-		if (CC(!load_pdptrs(vcpu, vcpu->arch.walk_mmu, vcpu->arch.cr3)))
+		if (CC(!load_pdptrs(vcpu, vcpu->arch.private->walk_mmu, vcpu->arch.private->cr3)))
 			return false;
 	}
 
@@ -3370,18 +3370,18 @@ enum nvmx_vmentry_status nested_vmx_enter_non_root_mode(struct kvm_vcpu *vcpu,
 	 * i.e. a VM-Fail detected by hardware but not KVM, KVM must unwind its
 	 * software model to the pre-VMEntry host state.  When EPT is disabled,
 	 * GUEST_CR3 holds KVM's shadow CR3, not L1's "real" CR3, which causes
-	 * nested_vmx_restore_host_state() to corrupt vcpu->arch.cr3.  Stuffing
-	 * vmcs01.GUEST_CR3 results in the unwind naturally setting arch.cr3 to
+	 * nested_vmx_restore_host_state() to corrupt vcpu->arch.private->cr3.  Stuffing
+	 * vmcs01.GUEST_CR3 results in the unwind naturally setting arch.private->cr3 to
 	 * the correct value.  Smashing vmcs01.GUEST_CR3 is safe because nested
 	 * VM-Exits, and the unwind, reset KVM's MMU, i.e. vmcs01.GUEST_CR3 is
 	 * guaranteed to be overwritten with a shadow CR3 prior to re-entering
 	 * L1.  Don't stuff vmcs01.GUEST_CR3 when using nested early checks as
-	 * KVM modifies vcpu->arch.cr3 if and only if the early hardware checks
+	 * KVM modifies vcpu->arch.private->cr3 if and only if the early hardware checks
 	 * pass, and early VM-Fails do not reset KVM's MMU, i.e. the VM-Fail
 	 * path would need to manually save/restore vmcs01.GUEST_CR3.
 	 */
 	if (!enable_ept && !nested_early_check)
-		vmcs_writel(GUEST_CR3, vcpu->arch.cr3);
+		vmcs_writel(GUEST_CR3, vcpu->arch.private->cr3);
 
 	vmx_switch_vmcs(vcpu, &vmx->nested.vmcs02);
 
@@ -3655,20 +3655,20 @@ static inline unsigned long
 vmcs12_guest_cr0(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12)
 {
 	return
-	/*1*/	(vmcs_readl(GUEST_CR0) & vcpu->arch.cr0_guest_owned_bits) |
+	/*1*/	(vmcs_readl(GUEST_CR0) & vcpu->arch.private->cr0_guest_owned_bits) |
 	/*2*/	(vmcs12->guest_cr0 & vmcs12->cr0_guest_host_mask) |
 	/*3*/	(vmcs_readl(CR0_READ_SHADOW) & ~(vmcs12->cr0_guest_host_mask |
-			vcpu->arch.cr0_guest_owned_bits));
+			vcpu->arch.private->cr0_guest_owned_bits));
 }
 
 static inline unsigned long
 vmcs12_guest_cr4(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12)
 {
 	return
-	/*1*/	(vmcs_readl(GUEST_CR4) & vcpu->arch.cr4_guest_owned_bits) |
+	/*1*/	(vmcs_readl(GUEST_CR4) & vcpu->arch.private->cr4_guest_owned_bits) |
 	/*2*/	(vmcs12->guest_cr4 & vmcs12->cr4_guest_host_mask) |
 	/*3*/	(vmcs_readl(CR4_READ_SHADOW) & ~(vmcs12->cr4_guest_host_mask |
-			vcpu->arch.cr4_guest_owned_bits));
+			vcpu->arch.private->cr4_guest_owned_bits));
 }
 
 static void vmcs12_save_pending_event(struct kvm_vcpu *vcpu,
@@ -4255,11 +4255,11 @@ static void load_vmcs12_host_state(struct kvm_vcpu *vcpu,
 	 * CR0_GUEST_HOST_MASK is already set in the original vmcs01
 	 * (KVM doesn't change it);
 	 */
-	vcpu->arch.cr0_guest_owned_bits = KVM_POSSIBLE_CR0_GUEST_BITS;
+	vcpu->arch.private->cr0_guest_owned_bits = KVM_POSSIBLE_CR0_GUEST_BITS;
 	vmx_set_cr0(vcpu, vmcs12->host_cr0);
 
 	/* Same as above - no reason to call set_cr4_guest_host_mask().  */
-	vcpu->arch.cr4_guest_owned_bits = ~vmcs_readl(CR4_GUEST_HOST_MASK);
+	vcpu->arch.private->cr4_guest_owned_bits = ~vmcs_readl(CR4_GUEST_HOST_MASK);
 	vmx_set_cr4(vcpu, vmcs12->host_cr4);
 
 	nested_ept_uninit_mmu_context(vcpu);
@@ -4405,14 +4405,14 @@ static void nested_vmx_restore_host_state(struct kvm_vcpu *vcpu)
 	 */
 	vmx_set_efer(vcpu, nested_vmx_get_vmcs01_guest_efer(vmx));
 
-	vcpu->arch.cr0_guest_owned_bits = KVM_POSSIBLE_CR0_GUEST_BITS;
+	vcpu->arch.private->cr0_guest_owned_bits = KVM_POSSIBLE_CR0_GUEST_BITS;
 	vmx_set_cr0(vcpu, vmcs_readl(CR0_READ_SHADOW));
 
-	vcpu->arch.cr4_guest_owned_bits = ~vmcs_readl(CR4_GUEST_HOST_MASK);
+	vcpu->arch.private->cr4_guest_owned_bits = ~vmcs_readl(CR4_GUEST_HOST_MASK);
 	vmx_set_cr4(vcpu, vmcs_readl(CR4_READ_SHADOW));
 
 	nested_ept_uninit_mmu_context(vcpu);
-	vcpu->arch.cr3 = vmcs_readl(GUEST_CR3);
+	vcpu->arch.private->cr3 = vmcs_readl(GUEST_CR3);
 	kvm_register_mark_available(vcpu, VCPU_EXREG_CR3);
 
 	/*
@@ -5000,7 +5000,7 @@ static inline void nested_release_vmcs12(struct kvm_vcpu *vcpu)
 				  vmx->nested.current_vmptr >> PAGE_SHIFT,
 				  vmx->nested.cached_vmcs12, 0, VMCS12_SIZE);
 
-	kvm_mmu_free_roots(vcpu, &vcpu->arch.guest_mmu, KVM_MMU_ROOTS_ALL);
+	kvm_mmu_free_roots(vcpu, &vcpu->arch.private->guest_mmu, KVM_MMU_ROOTS_ALL);
 
 	vmx->nested.current_vmptr = INVALID_GPA;
 }
@@ -5427,7 +5427,7 @@ static int handle_invept(struct kvm_vcpu *vcpu)
 	 * Nested EPT roots are always held through guest_mmu,
 	 * not root_mmu.
 	 */
-	mmu = &vcpu->arch.guest_mmu;
+	mmu = &vcpu->arch.private->guest_mmu;
 
 	switch (type) {
 	case VMX_EPT_EXTENT_CONTEXT:
@@ -5545,7 +5545,7 @@ static int handle_invvpid(struct kvm_vcpu *vcpu)
 	 * TODO: sync only the affected SPTEs for INVDIVIDUAL_ADDR.
 	 */
 	if (!enable_ept)
-		kvm_mmu_free_guest_mode_roots(vcpu, &vcpu->arch.root_mmu);
+		kvm_mmu_free_guest_mode_roots(vcpu, &vcpu->arch.private->root_mmu);
 
 	return nested_vmx_succeed(vcpu);
 }

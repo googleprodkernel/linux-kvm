@@ -194,11 +194,11 @@ static bool FNAME(prefetch_invalid_gpte)(struct kvm_vcpu *vcpu,
 		goto no_present;
 
 	/* if accessed bit is not supported prefetch non accessed gpte */
-	if (PT_HAVE_ACCESSED_DIRTY(vcpu->arch.mmu) &&
+	if (PT_HAVE_ACCESSED_DIRTY(vcpu->arch.private->mmu) &&
 	    !(gpte & PT_GUEST_ACCESSED_MASK))
 		goto no_present;
 
-	if (FNAME(is_rsvd_bits_set)(vcpu->arch.mmu, gpte, PG_LEVEL_4K))
+	if (FNAME(is_rsvd_bits_set)(vcpu->arch.private->mmu, gpte, PG_LEVEL_4K))
 		goto no_present;
 
 	return false;
@@ -533,7 +533,7 @@ error:
 	}
 #endif
 	walker->fault.address = addr;
-	walker->fault.nested_page_fault = mmu != vcpu->arch.walk_mmu;
+	walker->fault.nested_page_fault = mmu != vcpu->arch.private->walk_mmu;
 	walker->fault.async_page_fault = false;
 
 	trace_kvm_mmu_walker_error(walker->fault.error_code);
@@ -543,7 +543,7 @@ error:
 static int FNAME(walk_addr)(struct guest_walker *walker,
 			    struct kvm_vcpu *vcpu, gpa_t addr, u32 access)
 {
-	return FNAME(walk_addr_generic)(walker, vcpu, vcpu->arch.mmu, addr,
+	return FNAME(walk_addr_generic)(walker, vcpu, vcpu->arch.private->mmu, addr,
 					access);
 }
 
@@ -552,7 +552,7 @@ static int FNAME(walk_addr_nested)(struct guest_walker *walker,
 				   struct kvm_vcpu *vcpu, gva_t addr,
 				   u32 access)
 {
-	return FNAME(walk_addr_generic)(walker, vcpu, &vcpu->arch.nested_mmu,
+	return FNAME(walk_addr_generic)(walker, vcpu, &vcpu->arch.private->nested_mmu,
 					addr, access);
 }
 #endif
@@ -573,7 +573,7 @@ FNAME(prefetch_gpte)(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp,
 
 	gfn = gpte_to_gfn(gpte);
 	pte_access = sp->role.access & FNAME(gpte_access)(gpte);
-	FNAME(protect_clean_gpte)(vcpu->arch.mmu, &pte_access, gpte);
+	FNAME(protect_clean_gpte)(vcpu->arch.private->mmu, &pte_access, gpte);
 
 	slot = gfn_to_memslot_dirty_bitmap(vcpu, gfn,
 			no_dirty_log && (pte_access & ACC_WRITE_MASK));
@@ -670,7 +670,7 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 	WARN_ON_ONCE(gw->gfn != base_gfn);
 	direct_access = gw->pte_access;
 
-	top_level = vcpu->arch.mmu->root_level;
+	top_level = vcpu->arch.private->mmu->root_level;
 	if (top_level == PT32E_ROOT_LEVEL)
 		top_level = PT32_ROOT_LEVEL;
 	/*
@@ -682,7 +682,7 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 	if (FNAME(gpte_changed)(vcpu, gw, top_level))
 		goto out_gpte_changed;
 
-	if (WARN_ON(!VALID_PAGE(vcpu->arch.mmu->root_hpa)))
+	if (WARN_ON(!VALID_PAGE(vcpu->arch.private->mmu->root_hpa)))
 		goto out_gpte_changed;
 
 	for (shadow_walk_init(&it, vcpu, fault->addr);
@@ -806,7 +806,7 @@ FNAME(is_self_change_mapping)(struct kvm_vcpu *vcpu,
 	bool self_changed = false;
 
 	if (!(walker->pte_access & ACC_WRITE_MASK ||
-	    (!is_cr0_wp(vcpu->arch.mmu) && !user_fault)))
+	    (!is_cr0_wp(vcpu->arch.private->mmu) && !user_fault)))
 		return false;
 
 	for (level = walker->level; level <= walker->max_level; level++) {
@@ -905,7 +905,7 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	 * we will cache the incorrect access into mmio spte.
 	 */
 	if (fault->write && !(walker.pte_access & ACC_WRITE_MASK) &&
-	    !is_cr0_wp(vcpu->arch.mmu) && !fault->user && fault->slot) {
+	    !is_cr0_wp(vcpu->arch.private->mmu) && !fault->user && fault->slot) {
 		walker.pte_access |= ACC_WRITE_MASK;
 		walker.pte_access &= ~ACC_USER_MASK;
 
@@ -915,7 +915,7 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 		 * then we should prevent the kernel from executing it
 		 * if SMEP is enabled.
 		 */
-		if (is_cr4_smep(vcpu->arch.mmu))
+		if (is_cr4_smep(vcpu->arch.private->mmu))
 			walker.pte_access &= ~ACC_EXEC_MASK;
 	}
 
@@ -1071,7 +1071,7 @@ static gpa_t FNAME(gva_to_gpa_nested)(struct kvm_vcpu *vcpu, gpa_t vaddr,
  */
 static int FNAME(sync_page)(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp)
 {
-	union kvm_mmu_page_role mmu_role = vcpu->arch.mmu->mmu_role.base;
+	union kvm_mmu_page_role mmu_role = vcpu->arch.private->mmu->mmu_role.base;
 	int i;
 	bool host_writable;
 	gpa_t first_pte_gpa;
@@ -1129,7 +1129,7 @@ static int FNAME(sync_page)(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp)
 		gfn = gpte_to_gfn(gpte);
 		pte_access = sp->role.access;
 		pte_access &= FNAME(gpte_access)(gpte);
-		FNAME(protect_clean_gpte)(vcpu->arch.mmu, &pte_access, gpte);
+		FNAME(protect_clean_gpte)(vcpu->arch.private->mmu, &pte_access, gpte);
 
 		if (sync_mmio_spte(vcpu, &sp->spt[i], gfn, pte_access))
 			continue;

@@ -565,28 +565,28 @@ static int sev_es_sync_vmsa(struct vcpu_svm *svm)
 		return -EINVAL;
 
 	/* Sync registgers */
-	save->rax = svm->vcpu.arch.regs[VCPU_REGS_RAX];
-	save->rbx = svm->vcpu.arch.regs[VCPU_REGS_RBX];
-	save->rcx = svm->vcpu.arch.regs[VCPU_REGS_RCX];
-	save->rdx = svm->vcpu.arch.regs[VCPU_REGS_RDX];
-	save->rsp = svm->vcpu.arch.regs[VCPU_REGS_RSP];
-	save->rbp = svm->vcpu.arch.regs[VCPU_REGS_RBP];
-	save->rsi = svm->vcpu.arch.regs[VCPU_REGS_RSI];
-	save->rdi = svm->vcpu.arch.regs[VCPU_REGS_RDI];
+	save->rax = svm->vcpu.arch.private->regs[VCPU_REGS_RAX];
+	save->rbx = svm->vcpu.arch.private->regs[VCPU_REGS_RBX];
+	save->rcx = svm->vcpu.arch.private->regs[VCPU_REGS_RCX];
+	save->rdx = svm->vcpu.arch.private->regs[VCPU_REGS_RDX];
+	save->rsp = svm->vcpu.arch.private->regs[VCPU_REGS_RSP];
+	save->rbp = svm->vcpu.arch.private->regs[VCPU_REGS_RBP];
+	save->rsi = svm->vcpu.arch.private->regs[VCPU_REGS_RSI];
+	save->rdi = svm->vcpu.arch.private->regs[VCPU_REGS_RDI];
 #ifdef CONFIG_X86_64
-	save->r8  = svm->vcpu.arch.regs[VCPU_REGS_R8];
-	save->r9  = svm->vcpu.arch.regs[VCPU_REGS_R9];
-	save->r10 = svm->vcpu.arch.regs[VCPU_REGS_R10];
-	save->r11 = svm->vcpu.arch.regs[VCPU_REGS_R11];
-	save->r12 = svm->vcpu.arch.regs[VCPU_REGS_R12];
-	save->r13 = svm->vcpu.arch.regs[VCPU_REGS_R13];
-	save->r14 = svm->vcpu.arch.regs[VCPU_REGS_R14];
-	save->r15 = svm->vcpu.arch.regs[VCPU_REGS_R15];
+	save->r8  = svm->vcpu.arch.private->regs[VCPU_REGS_R8];
+	save->r9  = svm->vcpu.arch.private->regs[VCPU_REGS_R9];
+	save->r10 = svm->vcpu.arch.private->regs[VCPU_REGS_R10];
+	save->r11 = svm->vcpu.arch.private->regs[VCPU_REGS_R11];
+	save->r12 = svm->vcpu.arch.private->regs[VCPU_REGS_R12];
+	save->r13 = svm->vcpu.arch.private->regs[VCPU_REGS_R13];
+	save->r14 = svm->vcpu.arch.private->regs[VCPU_REGS_R14];
+	save->r15 = svm->vcpu.arch.private->regs[VCPU_REGS_R15];
 #endif
-	save->rip = svm->vcpu.arch.regs[VCPU_REGS_RIP];
+	save->rip = svm->vcpu.arch.private->regs[VCPU_REGS_RIP];
 
 	/* Sync some non-GPR registers before encrypting */
-	save->xcr0 = svm->vcpu.arch.xcr0;
+	save->xcr0 = svm->vcpu.arch.private->xcr0;
 	save->pkru = svm->vcpu.arch.pkru;
 	save->xss  = svm->vcpu.arch.ia32_xss;
 	save->dr6  = svm->vcpu.arch.dr6;
@@ -2301,10 +2301,10 @@ static void sev_es_sync_to_ghcb(struct vcpu_svm *svm)
 	 * Copy their values, even if they may not have been written during the
 	 * VM-Exit.  It's the guest's responsibility to not consume random data.
 	 */
-	ghcb_set_rax(ghcb, vcpu->arch.regs[VCPU_REGS_RAX]);
-	ghcb_set_rbx(ghcb, vcpu->arch.regs[VCPU_REGS_RBX]);
-	ghcb_set_rcx(ghcb, vcpu->arch.regs[VCPU_REGS_RCX]);
-	ghcb_set_rdx(ghcb, vcpu->arch.regs[VCPU_REGS_RDX]);
+	ghcb_set_rax(ghcb, vcpu->arch.private->regs[VCPU_REGS_RAX]);
+	ghcb_set_rbx(ghcb, vcpu->arch.private->regs[VCPU_REGS_RBX]);
+	ghcb_set_rcx(ghcb, vcpu->arch.private->regs[VCPU_REGS_RCX]);
+	ghcb_set_rdx(ghcb, vcpu->arch.private->regs[VCPU_REGS_RDX]);
 }
 
 static void sev_es_sync_from_ghcb(struct vcpu_svm *svm)
@@ -2326,18 +2326,18 @@ static void sev_es_sync_from_ghcb(struct vcpu_svm *svm)
 	 *
 	 * Copy their values to the appropriate location if supplied.
 	 */
-	memset(vcpu->arch.regs, 0, sizeof(vcpu->arch.regs));
+	memset(vcpu->arch.private->regs, 0, sizeof(vcpu->arch.private->regs));
 
-	vcpu->arch.regs[VCPU_REGS_RAX] = ghcb_get_rax_if_valid(ghcb);
-	vcpu->arch.regs[VCPU_REGS_RBX] = ghcb_get_rbx_if_valid(ghcb);
-	vcpu->arch.regs[VCPU_REGS_RCX] = ghcb_get_rcx_if_valid(ghcb);
-	vcpu->arch.regs[VCPU_REGS_RDX] = ghcb_get_rdx_if_valid(ghcb);
-	vcpu->arch.regs[VCPU_REGS_RSI] = ghcb_get_rsi_if_valid(ghcb);
+	vcpu->arch.private->regs[VCPU_REGS_RAX] = ghcb_get_rax_if_valid(ghcb);
+	vcpu->arch.private->regs[VCPU_REGS_RBX] = ghcb_get_rbx_if_valid(ghcb);
+	vcpu->arch.private->regs[VCPU_REGS_RCX] = ghcb_get_rcx_if_valid(ghcb);
+	vcpu->arch.private->regs[VCPU_REGS_RDX] = ghcb_get_rdx_if_valid(ghcb);
+	vcpu->arch.private->regs[VCPU_REGS_RSI] = ghcb_get_rsi_if_valid(ghcb);
 
 	svm->vmcb->save.cpl = ghcb_get_cpl_if_valid(ghcb);
 
 	if (ghcb_xcr0_is_valid(ghcb)) {
-		vcpu->arch.xcr0 = ghcb_get_xcr0(ghcb);
+		vcpu->arch.private->xcr0 = ghcb_get_xcr0(ghcb);
 		kvm_update_cpuid_runtime(vcpu);
 	}
 
@@ -2667,8 +2667,8 @@ static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
 					     GHCB_MSR_CPUID_FUNC_POS);
 
 		/* Initialize the registers needed by the CPUID intercept */
-		vcpu->arch.regs[VCPU_REGS_RAX] = cpuid_fn;
-		vcpu->arch.regs[VCPU_REGS_RCX] = 0;
+		vcpu->arch.private->regs[VCPU_REGS_RAX] = cpuid_fn;
+		vcpu->arch.private->regs[VCPU_REGS_RCX] = 0;
 
 		ret = svm_invoke_exit_handler(vcpu, SVM_EXIT_CPUID);
 		if (!ret) {
@@ -2680,13 +2680,13 @@ static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
 					      GHCB_MSR_CPUID_REG_MASK,
 					      GHCB_MSR_CPUID_REG_POS);
 		if (cpuid_reg == 0)
-			cpuid_value = vcpu->arch.regs[VCPU_REGS_RAX];
+			cpuid_value = vcpu->arch.private->regs[VCPU_REGS_RAX];
 		else if (cpuid_reg == 1)
-			cpuid_value = vcpu->arch.regs[VCPU_REGS_RBX];
+			cpuid_value = vcpu->arch.private->regs[VCPU_REGS_RBX];
 		else if (cpuid_reg == 2)
-			cpuid_value = vcpu->arch.regs[VCPU_REGS_RCX];
+			cpuid_value = vcpu->arch.private->regs[VCPU_REGS_RCX];
 		else
-			cpuid_value = vcpu->arch.regs[VCPU_REGS_RDX];
+			cpuid_value = vcpu->arch.private->regs[VCPU_REGS_RDX];
 
 		set_ghcb_msr_bits(svm, cpuid_value,
 				  GHCB_MSR_CPUID_VALUE_MASK,

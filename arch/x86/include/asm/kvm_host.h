@@ -606,14 +606,12 @@ struct kvm_vcpu_xen {
 	u64 runstate_times[4];
 };
 
-struct kvm_vcpu_arch {
-	/*
+struct kvm_vcpu_arch_private {
+        /*
 	 * rip and regs accesses must go through
 	 * kvm_{register,rip}_{read,write} functions.
 	 */
 	unsigned long regs[NR_VCPU_REGS];
-	u32 regs_avail;
-	u32 regs_dirty;
 
 	unsigned long cr0;
 	unsigned long cr0_guest_owned_bits;
@@ -623,6 +621,63 @@ struct kvm_vcpu_arch {
 	unsigned long cr4_guest_owned_bits;
 	unsigned long cr4_guest_rsvd_bits;
 	unsigned long cr8;
+
+	/*
+	 * QEMU userspace and the guest each have their own FPU state.
+	 * In vcpu_run, we switch between the user and guest FPU contexts.
+	 * While running a VCPU, the VCPU thread will have the guest FPU
+	 * context.
+	 *
+	 * Note that while the PKRU state lives inside the fpu registers,
+	 * it is switched out separately at VMENTER and VMEXIT time. The
+	 * "guest_fpstate" state here contains the guest FPU context, with the
+	 * host PRKU bits.
+	 */
+	struct fpu_guest guest_fpu;
+
+	u64 xcr0;
+	u64 guest_supported_xcr0;
+
+	/*
+	 * Paging state of the vcpu
+	 *
+	 * If the vcpu runs in guest mode with two level paging this still saves
+	 * the paging mode of the l1 guest. This context is always used to
+	 * handle faults.
+	 */
+	struct kvm_mmu *mmu;
+
+	/* Non-nested MMU for L1 */
+	struct kvm_mmu root_mmu;
+
+	/* L1 MMU when running nested */
+	struct kvm_mmu guest_mmu;
+
+	/*
+	 * Pointer to the mmu context currently used for
+	 * gva_to_gpa translations.
+	 */
+	struct kvm_mmu *walk_mmu;
+
+	/*
+	 * Paging state of an L2 guest (used for nested npt)
+	 *
+	 * This context will save all necessary information to walk page tables
+	 * of an L2 guest. This context is only initialized for page table
+	 * walking and not for faulting since we never handle l2 page faults on
+	 * the host.
+	 */
+	struct kvm_mmu nested_mmu;
+
+	struct x86_emulate_ctxt *emulate_ctxt;
+};
+
+struct kvm_vcpu_arch {
+        struct kvm_vcpu_arch_private *private;
+	
+	u32 regs_avail;
+	u32 regs_dirty;
+
 	u32 host_pkru;
 	u32 pkru;
 	u32 hflags;
@@ -645,36 +700,6 @@ struct kvm_vcpu_arch {
 	u64 arch_capabilities;
 	u64 perf_capabilities;
 
-	/*
-	 * Paging state of the vcpu
-	 *
-	 * If the vcpu runs in guest mode with two level paging this still saves
-	 * the paging mode of the l1 guest. This context is always used to
-	 * handle faults.
-	 */
-	struct kvm_mmu *mmu;
-
-	/* Non-nested MMU for L1 */
-	struct kvm_mmu root_mmu;
-
-	/* L1 MMU when running nested */
-	struct kvm_mmu guest_mmu;
-
-	/*
-	 * Paging state of an L2 guest (used for nested npt)
-	 *
-	 * This context will save all necessary information to walk page tables
-	 * of an L2 guest. This context is only initialized for page table
-	 * walking and not for faulting since we never handle l2 page faults on
-	 * the host.
-	 */
-	struct kvm_mmu nested_mmu;
-
-	/*
-	 * Pointer to the mmu context currently used for
-	 * gva_to_gpa translations.
-	 */
-	struct kvm_mmu *walk_mmu;
 
 	struct kvm_mmu_memory_cache mmu_pte_list_desc_cache;
 	struct kvm_mmu_memory_cache mmu_shadow_page_cache;
@@ -683,21 +708,6 @@ struct kvm_vcpu_arch {
 
 	struct asi_pgtbl_pool asi_pgtbl_pool;
 
-	/*
-	 * QEMU userspace and the guest each have their own FPU state.
-	 * In vcpu_run, we switch between the user and guest FPU contexts.
-	 * While running a VCPU, the VCPU thread will have the guest FPU
-	 * context.
-	 *
-	 * Note that while the PKRU state lives inside the fpu registers,
-	 * it is switched out separately at VMENTER and VMEXIT time. The
-	 * "guest_fpstate" state here contains the guest FPU context, with the
-	 * host PRKU bits.
-	 */
-	struct fpu_guest guest_fpu;
-
-	u64 xcr0;
-	u64 guest_supported_xcr0;
 
 	struct kvm_pio_request pio;
 	void *pio_data;
@@ -734,7 +744,6 @@ struct kvm_vcpu_arch {
 
 	/* emulate context */
 
-	struct x86_emulate_ctxt *emulate_ctxt;
 	bool emulate_regs_need_sync_to_vcpu;
 	bool emulate_regs_need_sync_from_vcpu;
 	int (*complete_userspace_io)(struct kvm_vcpu *vcpu);

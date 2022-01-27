@@ -183,7 +183,7 @@ static inline bool x86_exception_has_error_code(unsigned int vector)
 
 static inline bool mmu_is_nested(struct kvm_vcpu *vcpu)
 {
-	return vcpu->arch.walk_mmu == &vcpu->arch.nested_mmu;
+	return vcpu->arch.private->walk_mmu == &vcpu->arch.private->nested_mmu;
 }
 
 static inline int is_pae(struct kvm_vcpu *vcpu)

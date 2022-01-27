@@ -114,7 +114,7 @@ static inline bool kvm_vcpu_ad_need_write_protect(struct kvm_vcpu *vcpu)
 	 * being enabled is mandatory as the bits used to denote WP-only SPTEs
 	 * are reserved for NPT w/ PAE (32-bit KVM).
 	 */
-	return vcpu->arch.mmu == &vcpu->arch.guest_mmu &&
+	return vcpu->arch.private->mmu == &vcpu->arch.private->guest_mmu &&
 	       kvm_x86_ops.cpu_dirty_log_size;
 }
 

@@ -2242,20 +2242,20 @@ static void vmx_cache_reg(struct kvm_vcpu *vcpu, enum kvm_reg reg)
 
 	switch (reg) {
 	case VCPU_REGS_RSP:
-		vcpu->arch.regs[VCPU_REGS_RSP] = vmcs_readl(GUEST_RSP);
+		vcpu->arch.private->regs[VCPU_REGS_RSP] = vmcs_readl(GUEST_RSP);
 		break;
 	case VCPU_REGS_RIP:
-		vcpu->arch.regs[VCPU_REGS_RIP] = vmcs_readl(GUEST_RIP);
+		vcpu->arch.private->regs[VCPU_REGS_RIP] = vmcs_readl(GUEST_RIP);
 		break;
 	case VCPU_EXREG_PDPTR:
 		if (enable_ept)
 			ept_save_pdptrs(vcpu);
 		break;
 	case VCPU_EXREG_CR0:
-		guest_owned_bits = vcpu->arch.cr0_guest_owned_bits;
+		guest_owned_bits = vcpu->arch.private->cr0_guest_owned_bits;
 
-		vcpu->arch.cr0 &= ~guest_owned_bits;
-		vcpu->arch.cr0 |= vmcs_readl(GUEST_CR0) & guest_owned_bits;
+		vcpu->arch.private->cr0 &= ~guest_owned_bits;
+		vcpu->arch.private->cr0 |= vmcs_readl(GUEST_CR0) & guest_owned_bits;
 		break;
 	case VCPU_EXREG_CR3:
 		/*
@@ -2263,13 +2263,13 @@ static void vmx_cache_reg(struct kvm_vcpu *vcpu, enum kvm_reg reg)
 		 * CR3 is loaded into hardware, not the guest's CR3.
 		 */
 		if (!(exec_controls_get(to_vmx(vcpu)) & CPU_BASED_CR3_LOAD_EXITING))
-			vcpu->arch.cr3 = vmcs_readl(GUEST_CR3);
+			vcpu->arch.private->cr3 = vmcs_readl(GUEST_CR3);
 		break;
 	case VCPU_EXREG_CR4:
-		guest_owned_bits = vcpu->arch.cr4_guest_owned_bits;
+		guest_owned_bits = vcpu->arch.private->cr4_guest_owned_bits;
 
-		vcpu->arch.cr4 &= ~guest_owned_bits;
-		vcpu->arch.cr4 |= vmcs_readl(GUEST_CR4) & guest_owned_bits;
+		vcpu->arch.private->cr4 &= ~guest_owned_bits;
+		vcpu->arch.private->cr4 |= vmcs_readl(GUEST_CR4) & guest_owned_bits;
 		break;
 	default:
 		KVM_BUG_ON(1, vcpu->kvm);
@@ -2926,7 +2926,7 @@ static inline int vmx_get_current_vpid(struct kvm_vcpu *vcpu)
 
 static void vmx_flush_tlb_current(struct kvm_vcpu *vcpu)
 {
-	struct kvm_mmu *mmu = vcpu->arch.mmu;
+	struct kvm_mmu *mmu = vcpu->arch.private->mmu;
 	u64 root_hpa = mmu->root_hpa;
 
 	/* No flush required if the current context is invalid. */
@@ -2963,7 +2963,7 @@ static void vmx_flush_tlb_guest(struct kvm_vcpu *vcpu)
 
 void vmx_ept_load_pdptrs(struct kvm_vcpu *vcpu)
 {
-	struct kvm_mmu *mmu = vcpu->arch.walk_mmu;
+	struct kvm_mmu *mmu = vcpu->arch.private->walk_mmu;
 
 	if (!kvm_register_is_dirty(vcpu, VCPU_EXREG_PDPTR))
 		return;
@@ -2978,7 +2978,7 @@ void vmx_ept_load_pdptrs(struct kvm_vcpu *vcpu)
 
 void ept_save_pdptrs(struct kvm_vcpu *vcpu)
 {
-	struct kvm_mmu *mmu = vcpu->arch.walk_mmu;
+	struct kvm_mmu *mmu = vcpu->arch.private->walk_mmu;
 
 	if (WARN_ON_ONCE(!is_pae_paging(vcpu)))
 		return;
@@ -3019,7 +3019,7 @@ void vmx_set_cr0(struct kvm_vcpu *vcpu, unsigned long cr0)
 
 	vmcs_writel(CR0_READ_SHADOW, cr0);
 	vmcs_writel(GUEST_CR0, hw_cr0);
-	vcpu->arch.cr0 = cr0;
+	vcpu->arch.private->cr0 = cr0;
 	kvm_register_mark_available(vcpu, VCPU_EXREG_CR0);
 
 #ifdef CONFIG_X86_64
@@ -3067,12 +3067,12 @@ void vmx_set_cr0(struct kvm_vcpu *vcpu, unsigned long cr0)
 			exec_controls_set(vmx, tmp);
 		}
 
-		/* Note, vmx_set_cr4() consumes the new vcpu->arch.cr0. */
+		/* Note, vmx_set_cr4() consumes the new vcpu->arch.private->cr0. */
 		if ((old_cr0_pg ^ cr0) & X86_CR0_PG)
 			vmx_set_cr4(vcpu, kvm_read_cr4(vcpu));
 	}
 
-	/* depends on vcpu->arch.cr0 to be set to a new value */
+	/* depends on vcpu->arch.private->cr0 to be set to a new value */
 	vmx->emulation_required = vmx_emulation_required(vcpu);
 }
 
@@ -3114,7 +3114,7 @@ static void vmx_load_mmu_pgd(struct kvm_vcpu *vcpu, hpa_t root_hpa,
 		if (!enable_unrestricted_guest && !is_paging(vcpu))
 			guest_cr3 = to_kvm_vmx(kvm)->ept_identity_map_addr;
 		else if (test_bit(VCPU_EXREG_CR3, (ulong *)&vcpu->arch.regs_avail))
-			guest_cr3 = vcpu->arch.cr3;
+			guest_cr3 = vcpu->arch.private->cr3;
 		else /* vmcs01.GUEST_CR3 is already up-to-date. */
 			update_guest_cr3 = false;
 		vmx_ept_load_pdptrs(vcpu);
@@ -3144,7 +3144,7 @@ static bool vmx_is_valid_cr4(struct kvm_vcpu *vcpu, unsigned long cr4)
 
 void vmx_set_cr4(struct kvm_vcpu *vcpu, unsigned long cr4)
 {
-	unsigned long old_cr4 = vcpu->arch.cr4;
+	unsigned long old_cr4 = vcpu->arch.private->cr4;
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	/*
 	 * Pass through host's Machine Check Enable value to hw_cr4, which
@@ -3171,7 +3171,7 @@ void vmx_set_cr4(struct kvm_vcpu *vcpu, unsigned long cr4)
 		}
 	}
 
-	vcpu->arch.cr4 = cr4;
+	vcpu->arch.private->cr4 = cr4;
 	kvm_register_mark_available(vcpu, VCPU_EXREG_CR4);
 
 	if (!is_unrestricted_guest(vcpu)) {
@@ -4040,14 +4040,14 @@ void set_cr4_guest_host_mask(struct vcpu_vmx *vmx)
 {
 	struct kvm_vcpu *vcpu = &vmx->vcpu;
 
-	vcpu->arch.cr4_guest_owned_bits = KVM_POSSIBLE_CR4_GUEST_BITS &
-					  ~vcpu->arch.cr4_guest_rsvd_bits;
+	vcpu->arch.private->cr4_guest_owned_bits = KVM_POSSIBLE_CR4_GUEST_BITS &
+					  ~vcpu->arch.private->cr4_guest_rsvd_bits;
 	if (!enable_ept)
-		vcpu->arch.cr4_guest_owned_bits &= ~X86_CR4_PGE;
+		vcpu->arch.private->cr4_guest_owned_bits &= ~X86_CR4_PGE;
 	if (is_guest_mode(&vmx->vcpu))
-		vcpu->arch.cr4_guest_owned_bits &=
+		vcpu->arch.private->cr4_guest_owned_bits &=
 			~get_vmcs12(vcpu)->cr4_guest_host_mask;
-	vmcs_writel(CR4_GUEST_HOST_MASK, ~vcpu->arch.cr4_guest_owned_bits);
+	vmcs_writel(CR4_GUEST_HOST_MASK, ~vcpu->arch.private->cr4_guest_owned_bits);
 }
 
 static u32 vmx_pin_based_exec_ctrl(struct vcpu_vmx *vmx)
@@ -4345,8 +4345,8 @@ static void init_vmcs(struct vcpu_vmx *vmx)
 	/* 22.2.1, 20.8.1 */
 	vm_entry_controls_set(vmx, vmx_vmentry_ctrl());
 
-	vmx->vcpu.arch.cr0_guest_owned_bits = KVM_POSSIBLE_CR0_GUEST_BITS;
-	vmcs_writel(CR0_GUEST_HOST_MASK, ~vmx->vcpu.arch.cr0_guest_owned_bits);
+	vmx->vcpu.arch.private->cr0_guest_owned_bits = KVM_POSSIBLE_CR0_GUEST_BITS;
+	vmcs_writel(CR0_GUEST_HOST_MASK, ~vmx->vcpu.arch.private->cr0_guest_owned_bits);
 
 	set_cr4_guest_host_mask(vmx);
 
@@ -4956,7 +4956,7 @@ static int handle_set_cr4(struct kvm_vcpu *vcpu, unsigned long val)
 
 static int handle_desc(struct kvm_vcpu *vcpu)
 {
-	WARN_ON(!(vcpu->arch.cr4 & X86_CR4_UMIP));
+	WARN_ON(!(vcpu->arch.private->cr4 & X86_CR4_UMIP));
 	return kvm_emulate_instruction(vcpu, 0);
 }
 
@@ -6626,13 +6626,13 @@ static noinstr void vmx_vcpu_enter_exit(struct kvm_vcpu *vcpu,
 		vmx->loaded_vmcs->host_state.cr3 = cr3;
 	}
 
-	if (vcpu->arch.cr2 != native_read_cr2())
-		native_write_cr2(vcpu->arch.cr2);
+	if (vcpu->arch.private->cr2 != native_read_cr2())
+		native_write_cr2(vcpu->arch.private->cr2);
 
-	vmx->fail = __vmx_vcpu_run(vmx, (unsigned long *)&vcpu->arch.regs,
+	vmx->fail = __vmx_vcpu_run(vmx, (unsigned long *)&vcpu->arch.private->regs,
 				   vmx->loaded_vmcs->launched);
 
-	vcpu->arch.cr2 = native_read_cr2();
+	vcpu->arch.private->cr2 = native_read_cr2();
 
 	VM_WARN_ON_ONCE(vcpu->kvm->asi && !is_asi_active());
 	asi_set_target_unrestricted();
@@ -6681,9 +6681,9 @@ static fastpath_t vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	WARN_ON_ONCE(vmx->nested.need_vmcs12_to_shadow_sync);
 
 	if (kvm_register_is_dirty(vcpu, VCPU_REGS_RSP))
-		vmcs_writel(GUEST_RSP, vcpu->arch.regs[VCPU_REGS_RSP]);
+		vmcs_writel(GUEST_RSP, vcpu->arch.private->regs[VCPU_REGS_RSP]);
 	if (kvm_register_is_dirty(vcpu, VCPU_REGS_RIP))
-		vmcs_writel(GUEST_RIP, vcpu->arch.regs[VCPU_REGS_RIP]);
+		vmcs_writel(GUEST_RIP, vcpu->arch.private->regs[VCPU_REGS_RIP]);
 
 	cr4 = cr4_read_shadow();
 	if (unlikely(cr4 != vmx->loaded_vmcs->host_state.cr4)) {

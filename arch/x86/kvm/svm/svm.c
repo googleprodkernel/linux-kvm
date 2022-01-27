@@ -1425,10 +1425,10 @@ static int svm_create_vcpu(struct kvm_vcpu *vcpu)
 		/*
 		 * SEV-ES guests maintain an encrypted version of their FPU
 		 * state which is restored and saved on VMRUN and VMEXIT.
-		 * Mark vcpu->arch.guest_fpu->fpstate as scratch so it won't
+		 * Mark vcpu->arch.private->guest_fpu->fpstate as scratch so it won't
 		 * do xsave/xrstor on it.
 		 */
-		fpstate_set_confidential(&vcpu->arch.guest_fpu);
+		fpstate_set_confidential(&vcpu->arch.private->guest_fpu);
 	}
 
 	err = avic_init_vcpu(svm);
@@ -1599,7 +1599,7 @@ static void svm_cache_reg(struct kvm_vcpu *vcpu, enum kvm_reg reg)
 	switch (reg) {
 	case VCPU_EXREG_PDPTR:
 		BUG_ON(!npt_enabled);
-		load_pdptrs(vcpu, vcpu->arch.walk_mmu, kvm_read_cr3(vcpu));
+		load_pdptrs(vcpu, vcpu->arch.private->walk_mmu, kvm_read_cr3(vcpu));
 		break;
 	default:
 		KVM_BUG_ON(1, vcpu->kvm);
@@ -1804,7 +1804,7 @@ void svm_set_cr0(struct kvm_vcpu *vcpu, unsigned long cr0)
 		}
 	}
 #endif
-	vcpu->arch.cr0 = cr0;
+	vcpu->arch.private->cr0 = cr0;
 
 	if (!npt_enabled)
 		hcr0 |= X86_CR0_PG | X86_CR0_WP;
@@ -1845,12 +1845,12 @@ static bool svm_is_valid_cr4(struct kvm_vcpu *vcpu, unsigned long cr4)
 void svm_set_cr4(struct kvm_vcpu *vcpu, unsigned long cr4)
 {
 	unsigned long host_cr4_mce = cr4_read_shadow() & X86_CR4_MCE;
-	unsigned long old_cr4 = vcpu->arch.cr4;
+	unsigned long old_cr4 = vcpu->arch.private->cr4;
 
 	if (npt_enabled && ((old_cr4 ^ cr4) & X86_CR4_PGE))
 		svm_flush_tlb(vcpu);
 
-	vcpu->arch.cr4 = cr4;
+	vcpu->arch.private->cr4 = cr4;
 	if (!npt_enabled)
 		cr4 |= X86_CR4_PAE;
 	cr4 |= host_cr4_mce;
@@ -2239,7 +2239,7 @@ enum {
 /* Return NONE_SVM_INSTR if not SVM instrs, otherwise return decode result */
 static int svm_instr_opcode(struct kvm_vcpu *vcpu)
 {
-	struct x86_emulate_ctxt *ctxt = vcpu->arch.emulate_ctxt;
+	struct x86_emulate_ctxt *ctxt = vcpu->arch.private->emulate_ctxt;
 
 	if (ctxt->b != 0x1 || ctxt->opcode_len != 2)
 		return NONE_SVM_INSTR;
@@ -2513,7 +2513,7 @@ static bool check_selective_cr0_intercepted(struct kvm_vcpu *vcpu,
 					    unsigned long val)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
-	unsigned long cr0 = vcpu->arch.cr0;
+	unsigned long cr0 = vcpu->arch.private->cr0;
 	bool ret = false;
 
 	if (!is_guest_mode(vcpu) ||
@@ -2585,7 +2585,7 @@ static int cr_interception(struct kvm_vcpu *vcpu)
 			val = kvm_read_cr0(vcpu);
 			break;
 		case 2:
-			val = vcpu->arch.cr2;
+			val = vcpu->arch.private->cr2;
 			break;
 		case 3:
 			val = kvm_read_cr3(vcpu);
@@ -3396,9 +3396,9 @@ static int handle_exit(struct kvm_vcpu *vcpu, fastpath_t exit_fastpath)
 	/* SEV-ES guests must use the CR write traps to track CR registers. */
 	if (!sev_es_guest(vcpu->kvm)) {
 		if (!svm_is_intercept(svm, INTERCEPT_CR0_WRITE))
-			vcpu->arch.cr0 = svm->vmcb->save.cr0;
+			vcpu->arch.private->cr0 = svm->vmcb->save.cr0;
 		if (npt_enabled)
-			vcpu->arch.cr3 = svm->vmcb->save.cr3;
+			vcpu->arch.private->cr3 = svm->vmcb->save.cr3;
 	}
 
 	if (is_guest_mode(vcpu)) {
@@ -3828,7 +3828,7 @@ static noinstr void svm_vcpu_enter_exit(struct kvm_vcpu *vcpu)
 		 * vmcb02 when switching vmcbs for nested virtualization.
 		 */
 		vmload(svm->vmcb01.pa);
-		__svm_vcpu_run(vmcb_pa, (unsigned long *)&vcpu->arch.regs);
+		__svm_vcpu_run(vmcb_pa, (unsigned long *)&vcpu->arch.private->regs);
 		vmsave(svm->vmcb01.pa);
 
 		vmload(__sme_page_pa(sd->save_area));
@@ -3843,9 +3843,9 @@ static __no_kcsan fastpath_t svm_vcpu_run(struct kvm_vcpu *vcpu)
 
 	trace_kvm_entry(vcpu);
 
-	svm->vmcb->save.rax = vcpu->arch.regs[VCPU_REGS_RAX];
-	svm->vmcb->save.rsp = vcpu->arch.regs[VCPU_REGS_RSP];
-	svm->vmcb->save.rip = vcpu->arch.regs[VCPU_REGS_RIP];
+	svm->vmcb->save.rax = vcpu->arch.private->regs[VCPU_REGS_RAX];
+	svm->vmcb->save.rsp = vcpu->arch.private->regs[VCPU_REGS_RSP];
+	svm->vmcb->save.rip = vcpu->arch.private->regs[VCPU_REGS_RIP];
 
 	/*
 	 * Disable singlestep if we're injecting an interrupt/exception.
@@ -3871,7 +3871,7 @@ static __no_kcsan fastpath_t svm_vcpu_run(struct kvm_vcpu *vcpu)
 		svm->vmcb->control.asid = svm->asid;
 		vmcb_mark_dirty(svm->vmcb, VMCB_ASID);
 	}
-	svm->vmcb->save.cr2 = vcpu->arch.cr2;
+	svm->vmcb->save.cr2 = vcpu->arch.private->cr2;
 
 	svm_hv_update_vp_id(svm->vmcb, vcpu);
 
@@ -3926,10 +3926,10 @@ static __no_kcsan fastpath_t svm_vcpu_run(struct kvm_vcpu *vcpu)
 		x86_spec_ctrl_restore_host(svm->spec_ctrl, svm->virt_spec_ctrl);
 
 	if (!sev_es_guest(vcpu->kvm)) {
-		vcpu->arch.cr2 = svm->vmcb->save.cr2;
-		vcpu->arch.regs[VCPU_REGS_RAX] = svm->vmcb->save.rax;
-		vcpu->arch.regs[VCPU_REGS_RSP] = svm->vmcb->save.rsp;
-		vcpu->arch.regs[VCPU_REGS_RIP] = svm->vmcb->save.rip;
+		vcpu->arch.private->cr2 = svm->vmcb->save.cr2;
+		vcpu->arch.private->regs[VCPU_REGS_RAX] = svm->vmcb->save.rax;
+		vcpu->arch.private->regs[VCPU_REGS_RSP] = svm->vmcb->save.rsp;
+		vcpu->arch.private->regs[VCPU_REGS_RIP] = svm->vmcb->save.rip;
 	}
 
 	if (unlikely(svm->vmcb->control.exit_code == SVM_EXIT_NMI))
@@ -3999,8 +3999,8 @@ static void svm_load_mmu_pgd(struct kvm_vcpu *vcpu, hpa_t root_hpa,
 		/* Loading L2's CR3 is handled by enter_svm_guest_mode.  */
 		if (!test_bit(VCPU_EXREG_CR3, (ulong *)&vcpu->arch.regs_avail))
 			return;
-		cr3 = vcpu->arch.cr3;
-	} else if (vcpu->arch.mmu->shadow_root_level >= PT64_ROOT_4LEVEL) {
+		cr3 = vcpu->arch.private->cr3;
+	} else if (vcpu->arch.private->mmu->shadow_root_level >= PT64_ROOT_4LEVEL) {
 		cr3 = __sme_set(root_hpa) | kvm_get_active_pcid(vcpu);
 	} else {
 		/* PCID in the guest should be impossible with a 32-bit MMU. */
@@ -4221,7 +4221,7 @@ static int svm_check_intercept(struct kvm_vcpu *vcpu,
 					INTERCEPT_SELECTIVE_CR0)))
 			break;
 
-		cr0 = vcpu->arch.cr0 & ~SVM_CR0_SELECTIVE_MASK;
+		cr0 = vcpu->arch.private->cr0 & ~SVM_CR0_SELECTIVE_MASK;
 		val = info->src_val  & ~SVM_CR0_SELECTIVE_MASK;
 
 		if (info->intercept == x86_intercept_lmsw) {
@@ -4358,9 +4358,9 @@ static int svm_enter_smm(struct kvm_vcpu *vcpu, char *smstate)
 	/* FEE0h - SVM Guest VMCB Physical Address */
 	put_smstate(u64, smstate, 0x7ee0, svm->nested.vmcb12_gpa);
 
-	svm->vmcb->save.rax = vcpu->arch.regs[VCPU_REGS_RAX];
-	svm->vmcb->save.rsp = vcpu->arch.regs[VCPU_REGS_RSP];
-	svm->vmcb->save.rip = vcpu->arch.regs[VCPU_REGS_RIP];
+	svm->vmcb->save.rax = vcpu->arch.private->regs[VCPU_REGS_RAX];
+	svm->vmcb->save.rsp = vcpu->arch.private->regs[VCPU_REGS_RSP];
+	svm->vmcb->save.rip = vcpu->arch.private->regs[VCPU_REGS_RIP];
 
 	ret = nested_svm_vmexit(svm);
 	if (ret)

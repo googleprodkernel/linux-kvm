@@ -109,6 +109,8 @@ static atomic_t hardware_enable_failed;
 
 static struct kmem_cache *kvm_vcpu_cache;
 
+static struct kmem_cache *kvm_vcpu_private_cache;
+
 static __read_mostly struct preempt_ops kvm_preempt_ops;
 static DEFINE_PER_CPU_ASI_NOT_SENSITIVE(struct kvm_vcpu *, kvm_running_vcpu);
 
@@ -457,6 +459,7 @@ void kvm_vcpu_destroy(struct kvm_vcpu *vcpu)
 	put_pid(rcu_dereference_protected(vcpu->pid, 1));
 
 	free_page((unsigned long)vcpu->run);
+	kmem_cache_free(kvm_vcpu_private_cache, vcpu->arch.private);
 	kmem_cache_free(kvm_vcpu_cache, vcpu);
 }
 EXPORT_SYMBOL_GPL(kvm_vcpu_destroy);
@@ -2392,7 +2395,7 @@ static int hva_to_pfn_remapped(struct vm_area_struct *vma,
 	 * tail pages of non-compound higher order allocations, which
 	 * would then underflow the refcount when the caller does the
 	 * required put_page. Don't allow those pages here.
-	 */ 
+	 */
 	if (!kvm_try_get_pfn(pfn))
 		r = -EFAULT;
 
@@ -3562,17 +3565,25 @@ static int kvm_vm_ioctl_create_vcpu(struct kvm *kvm, u32 id)
 	if (r)
 		goto vcpu_decrement;
 
-	vcpu = kmem_cache_zalloc(kvm_vcpu_cache, GFP_KERNEL_ACCOUNT);
+	vcpu = kmem_cache_zalloc(kvm_vcpu_cache,
+                                 GFP_KERNEL_ACCOUNT | __GFP_GLOBAL_NONSENSITIVE);
 	if (!vcpu) {
 		r = -ENOMEM;
 		goto vcpu_decrement;
 	}
 
+        vcpu->arch.private = kmem_cache_zalloc(kvm_vcpu_private_cache,
+                                               GFP_KERNEL | __GFP_LOCAL_NONSENSITIVE);
+        if (!vcpu->arch.private) {
+                r = -ENOMEM;
+                goto vcpu_free;
+        }
+
 	BUILD_BUG_ON(sizeof(struct kvm_run) > PAGE_SIZE);
 	page = alloc_page(GFP_KERNEL_ACCOUNT | __GFP_ZERO | __GFP_LOCAL_NONSENSITIVE);
 	if (!page) {
 		r = -ENOMEM;
-		goto vcpu_free;
+		goto vcpu_private_free;
 	}
 	vcpu->run = page_address(page);
 
@@ -3631,6 +3642,8 @@ arch_vcpu_destroy:
 	kvm_arch_vcpu_destroy(vcpu);
 vcpu_free_run_page:
 	free_page((unsigned long)vcpu->run);
+vcpu_private_free:
+	kmem_cache_free(kvm_vcpu_private_cache, vcpu->arch.private);
 vcpu_free:
 	kmem_cache_free(kvm_vcpu_cache, vcpu);
 vcpu_decrement:
@@ -5492,7 +5505,7 @@ int kvm_init(void *opaque, unsigned vcpu_size, unsigned vcpu_align,
 		vcpu_align = __alignof__(struct kvm_vcpu);
 	kvm_vcpu_cache =
 		kmem_cache_create_usercopy("kvm_vcpu", vcpu_size, vcpu_align,
-					   SLAB_ACCOUNT,
+					   SLAB_ACCOUNT|SLAB_GLOBAL_NONSENSITIVE,
 					   offsetof(struct kvm_vcpu, arch),
 					   offsetofend(struct kvm_vcpu, stats_id)
 					   - offsetof(struct kvm_vcpu, arch),
@@ -5501,12 +5514,22 @@ int kvm_init(void *opaque, unsigned vcpu_size, unsigned vcpu_align,
 		r = -ENOMEM;
 		goto out_free_3;
 	}
-
+        kvm_vcpu_private_cache = kmem_cache_create_usercopy("kvm_vcpu_private",
+                                   sizeof(struct kvm_vcpu_arch_private),
+                                   __alignof__(struct kvm_vcpu_arch_private),
+                                   SLAB_ACCOUNT | SLAB_LOCAL_NONSENSITIVE,
+                                   0,
+                                   sizeof(struct kvm_vcpu_arch_private),
+                                   NULL);
+	if (!kvm_vcpu_private_cache) {
+	       r = -ENOMEM;
+	       goto out_free_4;
+	}
 	for_each_possible_cpu(cpu) {
 		if (!alloc_cpumask_var_node(&per_cpu(cpu_kick_mask, cpu),
 					    GFP_KERNEL, cpu_to_node(cpu))) {
 			r = -ENOMEM;
-			goto out_free_4;
+			goto out_free_vcpu_private_cache;
 		}
 	}
 
@@ -5541,6 +5564,8 @@ out_unreg:
 out_free_5:
 	for_each_possible_cpu(cpu)
 		free_cpumask_var(per_cpu(cpu_kick_mask, cpu));
+out_free_vcpu_private_cache:
+	kmem_cache_destroy(kvm_vcpu_private_cache);
 out_free_4:
 	kmem_cache_destroy(kvm_vcpu_cache);
 out_free_3:
@@ -5567,6 +5592,7 @@ void kvm_exit(void)
 	misc_deregister(&kvm_dev);
 	for_each_possible_cpu(cpu)
 		free_cpumask_var(per_cpu(cpu_kick_mask, cpu));
+	kmem_cache_destroy(kvm_vcpu_private_cache);
 	kmem_cache_destroy(kvm_vcpu_cache);
 	kvm_async_pf_deinit();
 	unregister_syscore_ops(&kvm_syscore_ops);

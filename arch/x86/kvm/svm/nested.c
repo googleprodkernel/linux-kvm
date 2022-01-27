@@ -97,7 +97,7 @@ static void nested_svm_init_mmu_context(struct kvm_vcpu *vcpu)
 
 	WARN_ON(mmu_is_nested(vcpu));
 
-	vcpu->arch.mmu = &vcpu->arch.guest_mmu;
+	vcpu->arch.private->mmu = &vcpu->arch.private->guest_mmu;
 
 	/*
 	 * The NPT format depends on L1's CR4 and EFER, which is in vmcb01.  Note,
@@ -107,16 +107,16 @@ static void nested_svm_init_mmu_context(struct kvm_vcpu *vcpu)
 	kvm_init_shadow_npt_mmu(vcpu, X86_CR0_PG, svm->vmcb01.ptr->save.cr4,
 				svm->vmcb01.ptr->save.efer,
 				svm->nested.ctl.nested_cr3);
-	vcpu->arch.mmu->get_guest_pgd     = nested_svm_get_tdp_cr3;
-	vcpu->arch.mmu->get_pdptr         = nested_svm_get_tdp_pdptr;
-	vcpu->arch.mmu->inject_page_fault = nested_svm_inject_npf_exit;
-	vcpu->arch.walk_mmu              = &vcpu->arch.nested_mmu;
+	vcpu->arch.private->mmu->get_guest_pgd     = nested_svm_get_tdp_cr3;
+	vcpu->arch.private->mmu->get_pdptr         = nested_svm_get_tdp_pdptr;
+	vcpu->arch.private->mmu->inject_page_fault = nested_svm_inject_npf_exit;
+	vcpu->arch.private->walk_mmu               = &vcpu->arch.private->nested_mmu;
 }
 
 static void nested_svm_uninit_mmu_context(struct kvm_vcpu *vcpu)
 {
-	vcpu->arch.mmu = &vcpu->arch.root_mmu;
-	vcpu->arch.walk_mmu = &vcpu->arch.root_mmu;
+	vcpu->arch.private->mmu = &vcpu->arch.private->root_mmu;
+	vcpu->arch.private->walk_mmu = &vcpu->arch.private->root_mmu;
 }
 
 void recalc_intercepts(struct vcpu_svm *svm)
@@ -437,13 +437,13 @@ static int nested_svm_load_cr3(struct kvm_vcpu *vcpu, unsigned long cr3,
 		return -EINVAL;
 
 	if (reload_pdptrs && !nested_npt && is_pae_paging(vcpu) &&
-	    CC(!load_pdptrs(vcpu, vcpu->arch.walk_mmu, cr3)))
+	    CC(!load_pdptrs(vcpu, vcpu->arch.private->walk_mmu, cr3)))
 		return -EINVAL;
 
 	if (!nested_npt)
 		kvm_mmu_new_pgd(vcpu, cr3);
 
-	vcpu->arch.cr3 = cr3;
+	vcpu->arch.private->cr3 = cr3;
 	kvm_register_mark_available(vcpu, VCPU_EXREG_CR3);
 
 	/* Re-initialize the MMU, e.g. to pick up CR4 MMU role changes. */
@@ -500,7 +500,7 @@ static void nested_vmcb02_prepare_save(struct vcpu_svm *svm, struct vmcb *vmcb12
 	svm_set_cr0(&svm->vcpu, vmcb12->save.cr0);
 	svm_set_cr4(&svm->vcpu, vmcb12->save.cr4);
 
-	svm->vcpu.arch.cr2 = vmcb12->save.cr2;
+	svm->vcpu.arch.private->cr2 = vmcb12->save.cr2;
 
 	kvm_rax_write(&svm->vcpu, vmcb12->save.rax);
 	kvm_rsp_write(&svm->vcpu, vmcb12->save.rsp);
@@ -634,7 +634,7 @@ int enter_svm_guest_mode(struct kvm_vcpu *vcpu, u64 vmcb12_gpa,
 		return ret;
 
 	if (!npt_enabled)
-		vcpu->arch.mmu->inject_page_fault = svm_inject_page_fault_nested;
+		vcpu->arch.private->mmu->inject_page_fault = svm_inject_page_fault_nested;
 
 	if (!from_vmrun)
 		kvm_make_request(KVM_REQ_GET_NESTED_STATE_PAGES, vcpu);
@@ -695,7 +695,7 @@ int nested_svm_vmrun(struct kvm_vcpu *vcpu)
 	 */
 	svm->vmcb01.ptr->save.efer   = vcpu->arch.efer;
 	svm->vmcb01.ptr->save.cr0    = kvm_read_cr0(vcpu);
-	svm->vmcb01.ptr->save.cr4    = vcpu->arch.cr4;
+	svm->vmcb01.ptr->save.cr4    = vcpu->arch.private->cr4;
 	svm->vmcb01.ptr->save.rflags = kvm_get_rflags(vcpu);
 	svm->vmcb01.ptr->save.rip    = kvm_rip_read(vcpu);
 
@@ -805,7 +805,7 @@ int nested_svm_vmexit(struct vcpu_svm *svm)
 	vmcb12->save.cr0    = kvm_read_cr0(vcpu);
 	vmcb12->save.cr3    = kvm_read_cr3(vcpu);
 	vmcb12->save.cr2    = vmcb->save.cr2;
-	vmcb12->save.cr4    = svm->vcpu.arch.cr4;
+	vmcb12->save.cr4    = svm->vcpu.arch.private->cr4;
 	vmcb12->save.rflags = kvm_get_rflags(vcpu);
 	vmcb12->save.rip    = kvm_rip_read(vcpu);
 	vmcb12->save.rsp    = kvm_rsp_read(vcpu);
@@ -991,7 +991,7 @@ static int nested_svm_exit_handled_msr(struct vcpu_svm *svm)
 	if (!(vmcb_is_intercept(&svm->nested.ctl, INTERCEPT_MSR_PROT)))
 		return NESTED_EXIT_HOST;
 
-	msr    = svm->vcpu.arch.regs[VCPU_REGS_RCX];
+	msr    = svm->vcpu.arch.private->regs[VCPU_REGS_RCX];
 	offset = svm_msrpm_offset(msr);
 	write  = svm->vmcb->control.exit_info_1 & 1;
 	mask   = 1 << ((2 * (msr & 0xf)) + write);
@@ -1131,7 +1131,7 @@ static void nested_svm_inject_exception_vmexit(struct vcpu_svm *svm)
 		else if (svm->vcpu.arch.exception.has_payload)
 			svm->vmcb->control.exit_info_2 = svm->vcpu.arch.exception.payload;
 		else
-			svm->vmcb->control.exit_info_2 = svm->vcpu.arch.cr2;
+			svm->vmcb->control.exit_info_2 = svm->vcpu.arch.private->cr2;
 	} else if (nr == DB_VECTOR) {
 		/* See inject_pending_event.  */
 		kvm_deliver_exception_payload(&svm->vcpu);
@@ -1396,7 +1396,7 @@ static int svm_set_nested_state(struct kvm_vcpu *vcpu,
 	 * Set it again to fix this.
 	 */
 
-	ret = nested_svm_load_cr3(&svm->vcpu, vcpu->arch.cr3,
+	ret = nested_svm_load_cr3(&svm->vcpu, vcpu->arch.private->cr3,
 				  nested_npt_enabled(svm), false);
 	if (WARN_ON_ONCE(ret))
 		goto out_free;
@@ -1449,7 +1449,7 @@ static bool svm_get_nested_state_pages(struct kvm_vcpu *vcpu)
 		 * the guest CR3 might be restored prior to setting the nested
 		 * state which can lead to a load of wrong PDPTRs.
 		 */
-		if (CC(!load_pdptrs(vcpu, vcpu->arch.walk_mmu, vcpu->arch.cr3)))
+		if (CC(!load_pdptrs(vcpu, vcpu->arch.private->walk_mmu, vcpu->arch.private->cr3)))
 			return false;
 
 	if (!nested_svm_vmrun_msrpm(svm)) {

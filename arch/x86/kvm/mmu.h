@@ -89,7 +89,7 @@ void kvm_mmu_sync_prev_roots(struct kvm_vcpu *vcpu);
 
 static inline int kvm_mmu_reload(struct kvm_vcpu *vcpu)
 {
-	if (likely(vcpu->arch.mmu->root_hpa != INVALID_PAGE))
+	if (likely(vcpu->arch.private->mmu->root_hpa != INVALID_PAGE))
 		return 0;
 
 	return kvm_mmu_load(vcpu);
@@ -111,13 +111,13 @@ static inline unsigned long kvm_get_active_pcid(struct kvm_vcpu *vcpu)
 
 static inline void kvm_mmu_load_pgd(struct kvm_vcpu *vcpu)
 {
-	u64 root_hpa = vcpu->arch.mmu->root_hpa;
+	u64 root_hpa = vcpu->arch.private->mmu->root_hpa;
 
 	if (!VALID_PAGE(root_hpa))
 		return;
 
 	static_call(kvm_x86_load_mmu_pgd)(vcpu, root_hpa,
-					  vcpu->arch.mmu->shadow_root_level);
+					  vcpu->arch.private->mmu->shadow_root_level);
 }
 
 struct kvm_page_fault {
@@ -193,7 +193,7 @@ static inline int kvm_mmu_do_page_fault(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa,
 		.rsvd = err & PFERR_RSVD_MASK,
 		.user = err & PFERR_USER_MASK,
 		.prefetch = prefetch,
-		.is_tdp = likely(vcpu->arch.mmu->page_fault == kvm_tdp_page_fault),
+		.is_tdp = likely(vcpu->arch.private->mmu->page_fault == kvm_tdp_page_fault),
 		.nx_huge_page_workaround_enabled = is_nx_huge_page_enabled(),
 
 		.max_level = KVM_MAX_HUGEPAGE_LEVEL,
@@ -204,7 +204,7 @@ static inline int kvm_mmu_do_page_fault(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa,
 	if (fault.is_tdp)
 		return kvm_tdp_page_fault(vcpu, &fault);
 #endif
-	return vcpu->arch.mmu->page_fault(vcpu, &fault);
+	return vcpu->arch.private->mmu->page_fault(vcpu, &fault);
 }
 
 /*

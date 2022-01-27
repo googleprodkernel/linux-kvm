@@ -162,7 +162,7 @@ static union kvm_mmu_page_role page_role_for_level(struct kvm_vcpu *vcpu,
 {
 	union kvm_mmu_page_role role;
 
-	role = vcpu->arch.mmu->mmu_role.base;
+	role = vcpu->arch.private->mmu->mmu_role.base;
 	role.level = level;
 	role.direct = true;
 	role.gpte_is_8_bytes = true;
@@ -198,7 +198,7 @@ hpa_t kvm_tdp_mmu_get_vcpu_root_hpa(struct kvm_vcpu *vcpu)
 
 	lockdep_assert_held_write(&kvm->mmu_lock);
 
-	role = page_role_for_level(vcpu, vcpu->arch.mmu->shadow_root_level);
+	role = page_role_for_level(vcpu, vcpu->arch.private->mmu->shadow_root_level);
 
 	/* Check for an existing root before allocating a new one. */
 	for_each_tdp_mmu_root(kvm, root, kvm_mmu_role_as_id(role)) {
@@ -207,7 +207,7 @@ hpa_t kvm_tdp_mmu_get_vcpu_root_hpa(struct kvm_vcpu *vcpu)
 			goto out;
 	}
 
-	root = alloc_tdp_mmu_page(vcpu, 0, vcpu->arch.mmu->shadow_root_level);
+	root = alloc_tdp_mmu_page(vcpu, 0, vcpu->arch.private->mmu->shadow_root_level);
 	refcount_set(&root->tdp_mmu_root_count, 1);
 
 	spin_lock(&kvm->arch.tdp_mmu_pages_lock);
@@ -952,7 +952,7 @@ static int tdp_mmu_map_handle_target_level(struct kvm_vcpu *vcpu,
  */
 int kvm_tdp_mmu_map(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 {
-	struct kvm_mmu *mmu = vcpu->arch.mmu;
+	struct kvm_mmu *mmu = vcpu->arch.private->mmu;
 	struct tdp_iter iter;
 	struct kvm_mmu_page *sp;
 	u64 *child_pt;
@@ -1486,11 +1486,11 @@ int kvm_tdp_mmu_get_walk(struct kvm_vcpu *vcpu, u64 addr, u64 *sptes,
 			 int *root_level)
 {
 	struct tdp_iter iter;
-	struct kvm_mmu *mmu = vcpu->arch.mmu;
+	struct kvm_mmu *mmu = vcpu->arch.private->mmu;
 	gfn_t gfn = addr >> PAGE_SHIFT;
 	int leaf = -1;
 
-	*root_level = vcpu->arch.mmu->shadow_root_level;
+	*root_level = vcpu->arch.private->mmu->shadow_root_level;
 
 	tdp_mmu_for_each_pte(iter, mmu, gfn, gfn + 1) {
 		leaf = iter.level;
@@ -1515,7 +1515,7 @@ u64 *kvm_tdp_mmu_fast_pf_get_last_sptep(struct kvm_vcpu *vcpu, u64 addr,
 					u64 *spte)
 {
 	struct tdp_iter iter;
-	struct kvm_mmu *mmu = vcpu->arch.mmu;
+	struct kvm_mmu *mmu = vcpu->arch.private->mmu;
 	gfn_t gfn = addr >> PAGE_SHIFT;
 	tdp_ptep_t sptep = NULL;
 

@@ -12,12 +12,12 @@
 #define BUILD_KVM_GPR_ACCESSORS(lname, uname)				      \
 static __always_inline unsigned long kvm_##lname##_read(struct kvm_vcpu *vcpu)\
 {									      \
-	return vcpu->arch.regs[VCPU_REGS_##uname];			      \
+	return vcpu->arch.private->regs[VCPU_REGS_##uname];		      \
 }									      \
 static __always_inline void kvm_##lname##_write(struct kvm_vcpu *vcpu,	      \
 						unsigned long val)	      \
 {									      \
-	vcpu->arch.regs[VCPU_REGS_##uname] = val;			      \
+	vcpu->arch.private->regs[VCPU_REGS_##uname] = val;		      \
 }
 BUILD_KVM_GPR_ACCESSORS(rax, RAX)
 BUILD_KVM_GPR_ACCESSORS(rbx, RBX)
@@ -82,7 +82,7 @@ static inline unsigned long kvm_register_read_raw(struct kvm_vcpu *vcpu, int reg
 	if (!kvm_register_is_available(vcpu, reg))
 		static_call(kvm_x86_cache_reg)(vcpu, reg);
 
-	return vcpu->arch.regs[reg];
+	return vcpu->arch.private->regs[reg];
 }
 
 static inline void kvm_register_write_raw(struct kvm_vcpu *vcpu, int reg,
@@ -91,7 +91,7 @@ static inline void kvm_register_write_raw(struct kvm_vcpu *vcpu, int reg,
 	if (WARN_ON_ONCE((unsigned int)reg >= NR_VCPU_REGS))
 		return;
 
-	vcpu->arch.regs[reg] = val;
+	vcpu->arch.private->regs[reg] = val;
 	kvm_register_mark_dirty(vcpu, reg);
 }
 
@@ -122,21 +122,21 @@ static inline u64 kvm_pdptr_read(struct kvm_vcpu *vcpu, int index)
 	if (!kvm_register_is_available(vcpu, VCPU_EXREG_PDPTR))
 		static_call(kvm_x86_cache_reg)(vcpu, VCPU_EXREG_PDPTR);
 
-	return vcpu->arch.walk_mmu->pdptrs[index];
+	return vcpu->arch.private->walk_mmu->pdptrs[index];
 }
 
 static inline void kvm_pdptr_write(struct kvm_vcpu *vcpu, int index, u64 value)
 {
-	vcpu->arch.walk_mmu->pdptrs[index] = value;
+	vcpu->arch.private->walk_mmu->pdptrs[index] = value;
 }
 
 static inline ulong kvm_read_cr0_bits(struct kvm_vcpu *vcpu, ulong mask)
 {
 	ulong tmask = mask & KVM_POSSIBLE_CR0_GUEST_BITS;
-	if ((tmask & vcpu->arch.cr0_guest_owned_bits) &&
+	if ((tmask & vcpu->arch.private->cr0_guest_owned_bits) &&
 	    !kvm_register_is_available(vcpu, VCPU_EXREG_CR0))
 		static_call(kvm_x86_cache_reg)(vcpu, VCPU_EXREG_CR0);
-	return vcpu->arch.cr0 & mask;
+	return vcpu->arch.private->cr0 & mask;
 }
 
 static inline ulong kvm_read_cr0(struct kvm_vcpu *vcpu)
@@ -147,17 +147,17 @@ static inline ulong kvm_read_cr0(struct kvm_vcpu *vcpu)
 static inline ulong kvm_read_cr4_bits(struct kvm_vcpu *vcpu, ulong mask)
 {
 	ulong tmask = mask & KVM_POSSIBLE_CR4_GUEST_BITS;
-	if ((tmask & vcpu->arch.cr4_guest_owned_bits) &&
+	if ((tmask & vcpu->arch.private->cr4_guest_owned_bits) &&
 	    !kvm_register_is_available(vcpu, VCPU_EXREG_CR4))
 		static_call(kvm_x86_cache_reg)(vcpu, VCPU_EXREG_CR4);
-	return vcpu->arch.cr4 & mask;
+	return vcpu->arch.private->cr4 & mask;
 }
 
 static inline ulong kvm_read_cr3(struct kvm_vcpu *vcpu)
 {
 	if (!kvm_register_is_available(vcpu, VCPU_EXREG_CR3))
 		static_call(kvm_x86_cache_reg)(vcpu, VCPU_EXREG_CR3);
-	return vcpu->arch.cr3;
+	return vcpu->arch.private->cr3;
 }
 
 static inline ulong kvm_read_cr4(struct kvm_vcpu *vcpu)
