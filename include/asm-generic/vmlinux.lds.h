@@ -235,8 +235,10 @@
 #define TRACE_PRINTKS()	 __start___trace_bprintk_fmt = .;      \
 			 KEEP(*(__trace_printk_fmt)) /* Trace_printk fmt' pointer */ \
 			 __stop___trace_bprintk_fmt = .;
-#define TRACEPOINT_STR() __start___tracepoint_str = .;	\
+#define TRACEPOINT_STR() . = ALIGN(PAGE_SIZE);          \
+                         __start___tracepoint_str = .;	\
 			 KEEP(*(__tracepoint_str)) /* Trace_printk fmt' pointer */ \
+                         . = ALIGN(PAGE_SIZE);          \
 			 __stop___tracepoint_str = .;
 #else
 #define TRACE_PRINTKS()
@@ -348,8 +350,10 @@
 	MEM_KEEP(init.data*)						\
 	MEM_KEEP(exit.data*)						\
 	*(.data.unlikely)						\
+	. = ALIGN(PAGE_SIZE);						\
 	__start_once = .;						\
 	*(.data.once)							\
+	. = ALIGN(PAGE_SIZE);						\
 	__end_once = .;							\
 	STRUCT_ALIGN();							\
 	*(__tracepoints)						\
@@ -453,9 +457,10 @@
 		*(.rodata) *(.rodata.*)					\
 		SCHED_DATA						\
 		RO_AFTER_INIT_DATA	/* Read only after init */	\
-		. = ALIGN(8);						\
+                . = ALIGN(PAGE_SIZE);	        			\
 		__start___tracepoints_ptrs = .;				\
 		KEEP(*(__tracepoints_ptrs)) /* Tracepoints: pointer array */ \
+                . = ALIGN(PAGE_SIZE);	        			\
 		__stop___tracepoints_ptrs = .;				\
 		*(__tracepoints_strings)/* Tracepoints: strings */	\
 	}								\
@@ -671,11 +676,13 @@
  */
 #define EXCEPTION_TABLE(align)						\
 	. = ALIGN(align);						\
+        . = ALIGN(PAGE_SIZE);                                           \
 	__ex_table : AT(ADDR(__ex_table) - LOAD_OFFSET) {		\
 		__start___ex_table = .;					\
 		KEEP(*(__ex_table))					\
+                . = ALIGN(PAGE_SIZE);                                   \
 		__stop___ex_table = .;					\
-	}
+	}                                                               \
 
 /*
  * .BTF

@@ -9,6 +9,7 @@
 
 #include <asm/asi.h>
 #include <asm/pgalloc.h>
+#include <asm/processor.h> /* struct irq_stack */
 #include <asm/mmu_context.h>
 
 #include "mm_internal.h"
@@ -16,6 +17,24 @@
 
 #undef pr_fmt
 #define pr_fmt(fmt)     "ASI: " fmt
+
+#include <linux/extable.h>
+#include <asm-generic/sections.h>
+
+extern struct exception_table_entry __start___ex_table[];
+extern struct exception_table_entry __stop___ex_table[];
+
+extern const char __start_asi_nonsensitive[], __end_asi_nonsensitive[];
+extern const char __start_asi_nonsensitive_readmostly[],
+            __end_asi_nonsensitive_readmostly[];
+extern const char __per_cpu_asi_start[], __per_cpu_asi_end[];
+extern const char *__start___tracepoint_str[];
+extern const char *__stop___tracepoint_str[];
+extern const char *__start___tracepoints_ptrs[];
+extern const char *__stop___tracepoints_ptrs[];
+extern const char __vvar_page[];
+
+DECLARE_PER_CPU_PAGE_ALIGNED(struct irq_stack, irq_stack_backing_store);
 
 static struct asi_class asi_class[ASI_MAX_NUM] __asi_not_sensitive;
 static DEFINE_SPINLOCK(asi_class_lock __asi_not_sensitive);
@@ -412,6 +431,7 @@ void asi_unload_module(struct module* module)
 static int __init asi_global_init(void)
 {
 	uint i, n;
+        int err = 0;
 
 	if (!boot_cpu_has(X86_FEATURE_ASI))
 		return 0;
@@ -435,6 +455,68 @@ static int __init asi_global_init(void)
 	static_branch_enable(&asi_local_map_initialized);
 
         pcpu_map_asi_reserved_chunk();
+
+
+	/*
+	 * TODO: We need to ensure that all the sections mapped below are
+	 * actually page-aligned by the linker. For now, we temporarily just
+	 * align the start/end addresses here, but that is incorrect as the
+	 * rest of the page could potentially contain sensitive data.
+	 */
+#define MAP_SECTION(start, end)                                   \
+        pr_err("%s:%d mapping 0x%lx --> 0x%lx",                   \
+               __FUNCTION__, __LINE__, start, end);               \
+       err = asi_map(ASI_GLOBAL_NONSENSITIVE,                    \
+                     (void*)((unsigned long)(start) & PAGE_MASK),\
+                      PAGE_ALIGN((unsigned long)(end)) -          \
+                     ((unsigned long)(start) & PAGE_MASK));      \
+       BUG_ON(err);
+
+#define MAP_SECTION_PERCPU(start, size)                                  \
+        pr_err("%s:%d mapping PERCPU 0x%lx --> 0x%lx",                   \
+               __FUNCTION__, __LINE__, start, (unsigned long)start+size); \
+       err = asi_map_percpu(ASI_GLOBAL_NONSENSITIVE,                     \
+                     (void*)((unsigned long)(start) & PAGE_MASK),        \
+                      PAGE_ALIGN((unsigned long)(size)));                \
+       BUG_ON(err);
+
+        MAP_SECTION(_stext, _etext);
+        MAP_SECTION(__init_begin, __init_end);
+        MAP_SECTION(__start_rodata, __end_rodata);
+        MAP_SECTION(__start_once, __end_once);
+        MAP_SECTION(__start___ex_table, __stop___ex_table);
+        MAP_SECTION(__start_asi_nonsensitive, __end_asi_nonsensitive);
+        MAP_SECTION(__start_asi_nonsensitive_readmostly,
+                    __end_asi_nonsensitive_readmostly);
+        MAP_SECTION(__vvar_page, __vvar_page + PAGE_SIZE);
+        MAP_SECTION(APIC_BASE, APIC_BASE + PAGE_SIZE);
+        MAP_SECTION(&phys_base, &phys_base + PAGE_SIZE);
+
+       /* TODO: add a build flag to enable disable mapping only when
+        * instrumentation is used */
+        MAP_SECTION(__start___tracepoints_ptrs, __stop___tracepoints_ptrs);
+        MAP_SECTION(__start___tracepoint_str, __stop___tracepoint_str);
+
+	MAP_SECTION_PERCPU((void*)__per_cpu_asi_start,
+	 		   __per_cpu_asi_end - __per_cpu_asi_start);
+
+	MAP_SECTION_PERCPU(&irq_stack_backing_store,
+			   sizeof(irq_stack_backing_store));
+
+	/* We have to map the stack canary into ASI. This is far from ideal, as
+	* attackers can use L1TF to steal the canary value, and then perhaps
+	* mount some other attack including a buffer overflow. This is a price
+	* we must pay to use ASI.
+	*/
+	MAP_SECTION_PERCPU(&fixed_percpu_data, PAGE_SIZE);
+
+#define CLONE_INIT_PGD(addr) \
+        asi_clone_pgd(asi_global_nonsensitive_pgd, init_mm.pgd, addr);
+
+        CLONE_INIT_PGD(CPU_ENTRY_AREA_BASE);
+#ifdef CONFIG_X86_ESPFIX64
+        CLONE_INIT_PGD(ESPFIX_BASE_ADDR);
+#endif
 
 	return 0;
 }

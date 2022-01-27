@@ -574,8 +574,20 @@ SYM_DATA_LOCAL(early_gdt_descr_base,	.quad INIT_PER_CPU_VAR(gdt_page))
 
 	.align 16
 /* This must match the first entry in level2_kernel_pgt */
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+/* TODO: Find a way to mark .section for phys_base */
+/* Ideally, we want to map phys_base in .data..asi_non_sensitive. That doesn't
+ * seem to work properly. For now, we just make sure phys_base is in it's own
+ * page. */
+	.align PAGE_SIZE
+#endif
 SYM_DATA(phys_base, .quad 0x0)
 EXPORT_SYMBOL(phys_base)
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	.align PAGE_SIZE
+#endif
 
 #include "../../x86/xen/xen-head.S"
 
