@@ -10148,12 +10148,16 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
 			srcu_read_unlock(&kvm->srcu, vcpu->srcu_idx);
 			r = xfer_to_guest_mode_handle_work(vcpu);
 			if (r)
-				return r;
+				goto exit;
 			vcpu->srcu_idx = srcu_read_lock(&kvm->srcu);
 		}
 	}
 
 	srcu_read_unlock(&kvm->srcu, vcpu->srcu_idx);
+
+exit:
+        /* TODO(oweisse): trace this exit if we're still within an ASI. */
+        asi_exit();
 
 	return r;
 }
