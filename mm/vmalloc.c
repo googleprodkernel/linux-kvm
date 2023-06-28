@@ -8,6 +8,7 @@
  *  Improving global KVA allocator, Uladzislau Rezki, Sony, May 2019
  */
 
+#include "linux/gfp.h"
 #include <linux/vmalloc.h>
 #include <linux/mm.h>
 #include <linux/module.h>
@@ -3041,6 +3042,33 @@ void __init vm_area_register_early(struct vm_struct *vm, size_t align)
 	kasan_populate_early_vm_area_shadow(vm->addr, vm->size);
 }
 
+static int asi_map_vm_area(struct vm_struct *area)
+{
+	if (!static_asi_enabled())
+		return 0;
+
+	if (area->flags & VM_GLOBAL_NONSENSITIVE)
+		return asi_map(ASI_GLOBAL_NONSENSITIVE, area->addr,
+			       get_vm_area_size(area));
+
+	return 0;
+}
+
+static void asi_unmap_vm_area(struct vm_struct *area)
+{
+	if (!static_asi_enabled())
+		return;
+
+	/*
+	 * TODO(b/300040022): The TLB flush here could potentially be avoided in
+	 * the case when the existing flush from try_purge_vmap_area_lazy()
+	 * and/or vm_unmap_aliases() happens non-lazily.
+	 */
+	if (area->flags & VM_GLOBAL_NONSENSITIVE)
+		asi_unmap(ASI_GLOBAL_NONSENSITIVE, area->addr,
+			  get_vm_area_size(area), /* sleepable = */ true);
+}
+
 static inline void setup_vmalloc_vm_locked(struct vm_struct *vm,
 	struct vmap_area *va, unsigned long flags, const void *caller)
 {
@@ -3190,6 +3218,7 @@ struct vm_struct *remove_vm_area(const void *addr)
 {
 	struct vmap_area *va;
 	struct vm_struct *vm;
+	unsigned long vm_addr;
 
 	might_sleep();
 
@@ -3201,6 +3230,7 @@ struct vm_struct *remove_vm_area(const void *addr)
 	if (!va || !va->vm)
 		return NULL;
 	vm = va->vm;
+	vm_addr = (unsigned long) READ_ONCE(vm->addr);
 
 	debug_check_no_locks_freed(vm->addr, get_vm_area_size(vm));
 	debug_check_no_obj_freed(vm->addr, get_vm_area_size(vm));
@@ -3208,6 +3238,7 @@ struct vm_struct *remove_vm_area(const void *addr)
 	kasan_poison_vmalloc(vm->addr, get_vm_area_size(vm));
 
 	free_unmap_vmap_area(va);
+	VM_BUG_ON((unsigned long) READ_ONCE(vm->addr) != vm_addr); /* for asi_unmap_vm_area() */
 	return vm;
 }
 
@@ -3326,7 +3357,13 @@ void vfree(const void *addr)
 	if (!addr)
 		return;
 
+	/*
+	 * Although remove_vm_area() states that it is only safe to use the size and flag fields of
+	 * the returned vm_struct, we believe it is safe for asi_unmap_vm_area() to access the addr
+	 * field of the vm_struct since nothing in remove_vm_area() writes to vm->addr.
+	 */
 	vm = remove_vm_area(addr);
+	asi_unmap_vm_area(vm);
 	if (unlikely(!vm)) {
 		WARN(1, KERN_ERR "Trying to vfree() nonexistent vm area (%p)\n",
 				addr);
@@ -3371,7 +3408,9 @@ void vunmap(const void *addr)
 
 	if (!addr)
 		return;
+
 	vm = remove_vm_area(addr);
+	asi_unmap_vm_area(vm);
 	if (unlikely(!vm)) {
 		WARN(1, KERN_ERR "Trying to vunmap() nonexistent vm area (%p)\n",
 				addr);
@@ -3380,6 +3419,24 @@ void vunmap(const void *addr)
 	kfree(vm);
 }
 EXPORT_SYMBOL(vunmap);
+
+static inline unsigned long asi_vm_flags(unsigned long vm_flags)
+{
+	unsigned long sensitivity = vm_flags & (VM_GLOBAL_NONSENSITIVE | VM_SENSITIVE);
+
+	if (!static_asi_enabled())
+		return vm_flags;
+
+	/* Sensitivity flags are mutually exclusive. */
+	if (WARN_ON_ONCE(sensitivity == (VM_GLOBAL_NONSENSITIVE | VM_SENSITIVE)))
+		vm_flags &= ~(VM_GLOBAL_NONSENSITIVE);
+
+	/* Default is global nonsensitive. */
+	if (!sensitivity)
+		vm_flags |= VM_GLOBAL_NONSENSITIVE;
+
+	return vm_flags;
+}
 
 /**
  * vmap - map an array of pages into virtually contiguous space
@@ -3418,6 +3475,8 @@ void *vmap(struct page **pages, unsigned int count,
 	if (count > totalram_pages())
 		return NULL;
 
+	flags = asi_vm_flags(flags);
+
 	size = (unsigned long)count << PAGE_SHIFT;
 	area = get_vm_area_caller(size, flags, __builtin_return_address(0));
 	if (!area)
@@ -3425,16 +3484,20 @@ void *vmap(struct page **pages, unsigned int count,
 
 	addr = (unsigned long)area->addr;
 	if (vmap_pages_range(addr, addr + size, pgprot_nx(prot),
-				pages, PAGE_SHIFT) < 0) {
-		vunmap(area->addr);
-		return NULL;
-	}
+				pages, PAGE_SHIFT) < 0)
+		goto err;
+
+	if (asi_map_vm_area(area))
+		goto err; /* The necessary asi_unmap() is in vunmap. */
 
 	if (flags & VM_MAP_PUT_PAGES) {
 		area->pages = pages;
 		area->nr_pages = count;
 	}
 	return area->addr;
+err:
+	vunmap(area->addr);
+	return NULL;
 }
 EXPORT_SYMBOL(vmap);
 
@@ -3702,11 +3765,56 @@ static void *__vmalloc_area_node(struct vm_struct *area, gfp_t gfp_mask,
 		goto fail;
 	}
 
+	if (asi_map_vm_area(area))
+		goto fail; /* The necessary asi_unmap() is in __vfree. */
+
 	return area->addr;
 
 fail:
 	vfree(area->addr);
 	return NULL;
+}
+
+static inline void set_asi_flags(unsigned long *vm_flags, gfp_t *gfp)
+{
+
+	gfp_t gfp_sensitivity = *gfp & (__GFP_GLOBAL_NONSENSITIVE | __GFP_SENSITIVE);
+
+	if (!static_asi_enabled())
+		return;
+
+	*vm_flags = asi_vm_flags(*vm_flags);
+
+	/* Sensitivity flags are mutually exclusive. */
+	if (WARN_ON_ONCE(gfp_sensitivity == (__GFP_GLOBAL_NONSENSITIVE | __GFP_SENSITIVE)))
+		*gfp &= ~(__GFP_GLOBAL_NONSENSITIVE);
+
+	/*
+	 * If you're asking for a sensitive vm allocation, the data must be
+	 * sensitive. If you don't mark the page allocation as sensitive the
+	 * data will still be accessible through the direct map, so it's
+	 * probably a security bug.
+	 */
+	if (WARN_ON_ONCE(*gfp & __GFP_GLOBAL_NONSENSITIVE && *vm_flags & VM_SENSITIVE)) {
+		*gfp |= __GFP_SENSITIVE;
+		*gfp &= ~__GFP_GLOBAL_NONSENSITIVE;
+	}
+
+	/*
+	 * If the caller didn't specify anything, we treat the underlying pages
+	 * as sensitive. This is just an optimization: logically the sensitivity
+	 * is a property of the data, not the mapping, so we'd just expect the
+	 * GFP flags to match the VM flags. But nonsensitive mappings have a
+	 * cost in TLB flushes etc. We don't expect vmalloc users to acesss the
+	 * allocated pages via the direct map so we can avoid that extra
+	 * mapping here.
+	 */
+	if (!gfp_sensitivity)
+		*gfp |= __GFP_SENSITIVE;
+
+	/* When mapping nonsensitive pages, clear any old sensitive data.*/
+	if (*vm_flags & VM_GLOBAL_NONSENSITIVE)
+		*gfp |= __GFP_ZERO;
 }
 
 /**
@@ -3780,6 +3888,8 @@ void *__vmalloc_node_range(unsigned long size, unsigned long align,
 		align = max(real_align, 1UL << shift);
 		size = ALIGN(real_size, 1UL << shift);
 	}
+
+	set_asi_flags(&vm_flags, &gfp_mask);
 
 again:
 	area = __get_vm_area_node(real_size, align, shift, VM_ALLOC |

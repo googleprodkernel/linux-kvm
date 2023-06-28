@@ -37,6 +37,14 @@ struct iov_iter;		/* in uio.h */
 #endif
 #define VM_SPARSE		0x00001000	/* sparse vm_area. not all pages are present. */
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+#define VM_GLOBAL_NONSENSITIVE	0x00000800	/* Similar to __GFP_GLOBAL_NONSENSITIVE */
+#define VM_SENSITIVE		0x00001000	/* Similar to __GFP_SENSITIVE */
+#else
+#define VM_GLOBAL_NONSENSITIVE	0
+#define VM_SENSITIVE		0
+#endif
+
 /* bits [20..32] reserved for arch specific ioremap internals */
 
 /*
