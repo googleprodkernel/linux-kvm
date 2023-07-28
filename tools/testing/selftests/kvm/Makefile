@@ -62,6 +62,7 @@ LIBKVM_riscv += lib/riscv/ucall.c
 
 # Non-compiled test targets
 TEST_PROGS_x86_64 += x86_64/nx_huge_pages_test.sh
+TEST_PROGS_x86_64 += x86_64/l1tf_test.sh
 
 # Compiled test targets
 TEST_GEN_PROGS_x86_64 = x86_64/cpuid_test
@@ -148,6 +149,7 @@ TEST_GEN_PROGS_x86_64 += system_counter_offset_test
 
 # Compiled outputs used by test targets
 TEST_GEN_PROGS_EXTENDED_x86_64 += x86_64/nx_huge_pages_test
+TEST_GEN_PROGS_EXTENDED_x86_64 += x86_64/l1tf_test
 
 TEST_GEN_PROGS_aarch64 += aarch64/aarch32_id_regs
 TEST_GEN_PROGS_aarch64 += aarch64/debug-exceptions
@@ -212,6 +214,7 @@ SPLIT_TESTS += get-reg-list
 TEST_PROGS += $(TEST_PROGS_$(ARCH_DIR))
 TEST_GEN_PROGS += $(TEST_GEN_PROGS_$(ARCH_DIR))
 TEST_GEN_PROGS_EXTENDED += $(TEST_GEN_PROGS_EXTENDED_$(ARCH_DIR))
+TEST_GEN_MODS_DIR := test_modules
 LIBKVM += $(LIBKVM_$(ARCH_DIR))
 
 OVERRIDE_TARGETS = 1
