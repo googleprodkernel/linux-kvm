@@ -68,7 +68,7 @@ static inline int asi_map(struct asi *asi, void *addr, size_t len)
 }
 
 static inline
-void asi_unmap(struct asi *asi, void *addr, size_t len) { }
+void asi_unmap(struct asi *asi, void *addr, size_t len, bool sleepable) { }
 
 static inline
 void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len) { }

@@ -86,7 +86,7 @@ void asi_exit(void);
 
 int  asi_map_gfp(struct asi *asi, void *addr, size_t len, gfp_t gfp_flags);
 int  asi_map(struct asi *asi, void *addr, size_t len);
-void asi_unmap(struct asi *asi, void *addr, size_t len);
+void asi_unmap(struct asi *asi, void *addr, size_t len, bool sleepable);
 void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len);
 
 static inline void asi_init_thread_state(struct thread_struct *thread)

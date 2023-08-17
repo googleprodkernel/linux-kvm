@@ -558,12 +558,20 @@ static inline bool pcp_allowed_order(unsigned int order)
 	return false;
 }
 
-static inline void free_the_page(struct page *page, unsigned int order)
+static inline void __free_the_page(struct page *page, unsigned int order)
 {
 	if (pcp_allowed_order(order))		/* Via pcp? */
 		free_unref_page(page, order);
 	else
 		__free_pages_ok(page, order, FPI_NONE);
+}
+
+static bool asi_unmap_freed_pages(struct page *page, unsigned int order);
+
+static inline void free_the_page(struct page *page, unsigned int order)
+{
+	if (asi_unmap_freed_pages(page, order))
+		__free_the_page(page, order);
 }
 
 /*
@@ -4364,6 +4372,163 @@ static inline bool prepare_alloc_pages(gfp_t gfp_mask, unsigned int order,
 	return true;
 }
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+
+static DEFINE_PER_CPU(struct work_struct, async_free_work);
+static DEFINE_PER_CPU(struct llist_head, pages_to_free_async);
+static bool async_free_work_initialized;
+
+static void async_free_work_fn(struct work_struct *work)
+{
+	struct page *page, *tmp;
+	struct llist_node *pages_to_free;
+	void *va;
+	size_t len;
+	uint order;
+
+	pages_to_free = llist_del_all(this_cpu_ptr(&pages_to_free_async));
+
+	/*
+	 * __free_the_page will mutate .lru, which is aliased against
+	 * .async_free_node, so we need _safe here.
+	 */
+	llist_for_each_entry_safe(page, tmp, pages_to_free, async_free_node) {
+		va = page_to_virt(page);
+		order = page->private;
+		len = PAGE_SIZE * (1 << order);
+
+		asi_unmap(ASI_GLOBAL_NONSENSITIVE, va, len, /* sleepable = */ true);
+		__free_the_page(page, order);
+		cond_resched();
+	}
+}
+
+static int __init asi_page_alloc_init(void)
+{
+	int cpu;
+
+	if (!static_asi_enabled())
+		return 0;
+
+	for_each_possible_cpu(cpu)
+		INIT_WORK(per_cpu_ptr(&async_free_work, cpu),
+			  async_free_work_fn);
+
+	/*
+	 * This function is called before SMP is initialized, so we can assume
+	 * that this is the only running CPU at this point.
+	 */
+
+	barrier();
+	async_free_work_initialized = true;
+	barrier();
+
+	if (!llist_empty(this_cpu_ptr(&pages_to_free_async)))
+		queue_work_on(smp_processor_id(), mm_percpu_wq,
+			      this_cpu_ptr(&async_free_work));
+
+	return 0;
+}
+early_initcall(asi_page_alloc_init);
+
+static int asi_map_alloced_pages(struct page *page, uint order, gfp_t gfp_mask)
+{
+	uint i;
+
+	if (!static_asi_enabled())
+		return 0;
+
+	if (gfp_mask & __GFP_GLOBAL_NONSENSITIVE) {
+		int err = asi_map_gfp(ASI_GLOBAL_NONSENSITIVE, page_to_virt(page),
+				      PAGE_SIZE * (1 << order), gfp_mask);
+
+		if (err)
+			return err;
+
+		for (i = 0; i < (1 << order); i++)
+			__SetPageGlobalNonSensitive(page + i);
+	}
+
+	return 0;
+}
+
+/* Returns true if the page can be immediately freed. */
+static bool asi_unmap_freed_pages(struct page *page, unsigned int order)
+{
+	void *va;
+	size_t len;
+
+	if (!static_asi_enabled() || !PageGlobalNonSensitive(page))
+		return true;
+
+	va = page_to_virt(page);
+	len = PAGE_SIZE * (1 << order);
+
+	/*
+	 * Synchronous flush with irqs_diasbled would deadlock. Flushing when
+	 * in_interrupt would probably work, but it's a bad idea (too slow).
+	 */
+	if (!irqs_disabled() && !in_interrupt()) {
+		/* Still can't sleep, might be otherwise atomic e.g. holding a spinlock. */
+		asi_unmap(ASI_GLOBAL_NONSENSITIVE, va, len, /* sleepable = */ false);
+		return true;
+	}
+
+	/*
+	 * If .async_free_node aliases something different than .lru that may
+	 * actually be fine, but we need to check very carefully hence the
+	 * overly cautious assertions.
+	 */
+	BUILD_BUG_ON(offsetof(struct page, async_free_node) != offsetof(struct page, lru));
+	BUILD_BUG_ON(offsetof(struct page, async_free_node) == offsetof(struct page, private));
+	page->private = order;
+	llist_add(&page->async_free_node, this_cpu_ptr(&pages_to_free_async));
+
+	if (async_free_work_initialized)
+		queue_work_on(smp_processor_id(), mm_percpu_wq,
+			      this_cpu_ptr(&async_free_work));
+
+	return false;
+}
+
+#else /* CONFIG_ADDRESS_SPACE_ISOLATION */
+
+static inline
+int asi_map_alloced_pages(struct page *pages, uint order, gfp_t gfp_mask)
+{
+	return 0;
+}
+
+static inline
+bool asi_unmap_freed_pages(struct page *page, unsigned int order)
+{
+	return true;
+}
+
+#endif
+
+static inline gfp_t __asi_gfp(gfp_t gfp)
+{
+	gfp_t sensitivity = gfp & (__GFP_GLOBAL_NONSENSITIVE | __GFP_SENSITIVE);
+
+	if (!static_asi_enabled())
+		return gfp;
+
+	/* Sensitivity flags are mutually exclusive. */
+	if (WARN_ON_ONCE(sensitivity == (__GFP_GLOBAL_NONSENSITIVE | __GFP_SENSITIVE)))
+		gfp &= ~(__GFP_GLOBAL_NONSENSITIVE);
+
+	/* Default is global non-sensitive. */
+	if (!sensitivity)
+		gfp |= __GFP_GLOBAL_NONSENSITIVE;
+
+	/* Clear out old (maybe sensitive) data before reallocating as nonsensitive. */
+	if (gfp & __GFP_GLOBAL_NONSENSITIVE)
+		gfp |= __GFP_ZERO;
+
+	return gfp;
+}
+
 /*
  * __alloc_pages_bulk - Allocate a number of order-0 pages to a list or array
  * @gfp: GFP flags for the allocation
@@ -4551,6 +4716,7 @@ struct page *__alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid,
 	if (WARN_ON_ONCE_GFP(order > MAX_PAGE_ORDER, gfp))
 		return NULL;
 
+	gfp = __asi_gfp(gfp);
 	gfp &= gfp_allowed_mask;
 	/*
 	 * Apply scoped allocation constraints. This is mainly about GFP_NOFS
@@ -4596,6 +4762,11 @@ out:
 
 	trace_mm_page_alloc(page, order, alloc_gfp, ac.migratetype);
 	kmsan_alloc_page(page, order, alloc_gfp);
+
+	if (page && unlikely(asi_map_alloced_pages(page, order, gfp))) {
+		__free_pages(page, order);
+		page = NULL;
+	}
 
 	return page;
 }

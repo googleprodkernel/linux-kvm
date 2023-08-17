@@ -4,7 +4,11 @@
 #include <linux/percpu.h>
 #include <linux/spinlock.h>
 
+#include "linux/printk.h"
 #include <linux/init.h>
+#include <linux/pgtable.h>
+#include <linux/stringify.h>
+
 #include <asm/asi.h>
 #include <asm/cmdline.h>
 #include <asm/pgalloc.h>
@@ -102,11 +106,18 @@ EXPORT_SYMBOL_GPL(asi_unregister_class);
  *    allocator from interrupts and the page allocator ultimately calls this
  *    code.
  *  - They support customizing the allocation flags.
+ *  - They avoid infinite recursion when the page allocator calls back to
+ *    asi_map
  *
  * On the other hand, they do not use the normal page allocation infrastructure,
  * that means that PTE pages do not have the PageTable type nor the PagePgtable
  * flag and we don't increment the meminfo stat (NR_PAGETABLE) as they do.
  * TODO(b/297938412): Determine what to do about those stats details.
+ *
+ * As an optimisation we attempt to map the pagetables as
+ * ASI_GLOBAL_NONSENSITIVE, but this can fail, and for simplicity we don't do
+ * anything about that. This means it's invalid to access ASI pagetables from a
+ * critical section.
  */
 static_assert(!IS_ENABLED(CONFIG_PARAVIRT));
 #define DEFINE_ASI_PGTBL_ALLOC(base, level)				\
@@ -115,8 +126,11 @@ static level##_t * asi_##level##_alloc(struct asi *asi,			\
 				       gfp_t flags)			\
 {									\
 	if (unlikely(base##_none(*base))) {				\
-		ulong pgtbl = get_zeroed_page(flags);			\
+		/* Avoid asi_map calls leading to recursive allocation */\
+		gfp_t pgtbl_gfp = (flags & ~__GFP_GLOBAL_NONSENSITIVE) | __GFP_SENSITIVE;\
+		ulong pgtbl = get_zeroed_page(pgtbl_gfp);			\
 		phys_addr_t pgtbl_pa;					\
+		int err;						\
 									\
 		if (!pgtbl)						\
 			return NULL;					\
@@ -130,6 +144,16 @@ static level##_t * asi_##level##_alloc(struct asi *asi,			\
 		}							\
 									\
 		mm_inc_nr_##level##s(asi->mm);				\
+									\
+		err = asi_map_gfp(ASI_GLOBAL_NONSENSITIVE,		\
+				  (void *)pgtbl, PAGE_SIZE, flags);	\
+		if (err)						\
+			/* Should be rare. Spooky. */			\
+			pr_warn_ratelimited("Created sensitive ASI %s (%pK, maps %luK).\n",\
+				#level, (void *)pgtbl, addr);			\
+		else							\
+			__SetPageGlobalNonSensitive(virt_to_page(pgtbl));\
+									\
 	}								\
 out:									\
 	VM_BUG_ON(base##_leaf(*base));					\
@@ -436,6 +460,8 @@ static bool follow_physaddr(
  * reason for this is that we don't want to unexpectedly undo mappings that
  * weren't created by the present caller.
  *
+ * This must not be called from the critical section.
+ *
  * If the source mapping is a large page and the range being mapped spans the
  * entire large page, then it will be mapped as a large page in the ASI page
  * tables too. If the range does not span the entire huge page, then it will be
@@ -458,6 +484,9 @@ int __must_check asi_map_gfp(struct asi *asi, void *addr, unsigned long len, gfp
 
 	if (!static_asi_enabled())
 		return 0;
+
+	/* ASI pagetables might be sensitive. */
+	WARN_ON_ONCE(asi_in_critical_section());
 
 	VM_BUG_ON(!IS_ALIGNED(start, PAGE_SIZE));
 	VM_BUG_ON(!IS_ALIGNED(len, PAGE_SIZE));
@@ -542,14 +571,16 @@ int __must_check asi_map(struct asi *asi, void *addr, unsigned long len)
  *
  * The area being unmapped must be a whole previously mapped region (or regions)
  * Unmapping a partial subset of a previously mapped region is not supported.
- * That will work, but may end up unmapping more than what was asked for, if
- * the mapping contained huge pages. A later patch will remove this limitation
- * by splitting the huge mapping in the ASI page table in such a case. For now,
+ * That will work, but may end up unmapping more than what was asked for, if the
+ * mapping contained huge pages. A later patch will remove this limitation by
+ * splitting the huge mapping in the ASI page table in such a case. For now,
  * vunmap_pgd_range() will just emit a warning if this situation is detected.
  *
- * This might sleep, and cannot be called with interrupts disabled.
+ * This cannot be called in the critical section, from an interrupt, or with
+ * interrupts disabled. Other than that, it may be called from atomic context if
+ * you set sleepable to false.
  */
-void asi_unmap(struct asi *asi, void *addr, size_t len)
+void asi_unmap(struct asi *asi, void *addr, size_t len, bool sleepable)
 {
 	size_t start = (size_t)addr;
 	size_t end = start + len;
@@ -558,11 +589,26 @@ void asi_unmap(struct asi *asi, void *addr, size_t len)
 	if (!static_asi_enabled() || !len)
 		return;
 
+	/* ASI pagetables might be sensitive. */
+	WARN_ON_ONCE(asi_in_critical_section());
+
 	VM_BUG_ON(start & ~PAGE_MASK);
 	VM_BUG_ON(len & ~PAGE_MASK);
 	VM_BUG_ON(!fault_in_kernel_space(start)); /* Misnamed, ignore "fault_" */
 
-	vunmap_pgd_range(asi->pgd, start, end, &mask);
+	/*
+	 * Need to be able to do this from atomic contexts. We feel comfortable
+	 * setting sleepable=false because we don't expect nonsensitive memory
+	 * to be large. If we're wrong about that, worth reporting it in case it
+	 * explains an apparent soft lockup. 1024 PMDs is a totally arbitrary
+	 * threshold.  (Note in theory there are false positives here, e.g.
+	 * unmapping whole PGD entries should be fine. But we're also interested
+	 * to find out if that's happening).
+	 */
+	if (!sleepable && len > 1024 * PMD_SIZE)
+		pr_warn_ratelimited("asi_unmap-ing 0x%zx bytes.\n", len);
+
+	vunmap_pgd_range(asi->pgd, start, end, &mask, sleepable);
 
 	/* We don't support partial unmappings - b/270310049 */
 	if (mask & PGTBL_P4D_MODIFIED) {
