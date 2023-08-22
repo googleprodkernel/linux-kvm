@@ -4,7 +4,9 @@
 #include <linux/percpu.h>
 #include <linux/spinlock.h>
 
+#include <linux/init.h>
 #include <asm/asi.h>
+#include <asm/cmdline.h>
 #include <asm/pgalloc.h>
 #include <asm/mmu_context.h>
 
@@ -27,6 +29,9 @@ static inline bool asi_index_valid(int index)
 int asi_register_class(const char *name, const struct asi_hooks *ops)
 {
 	int i;
+
+	if (!boot_cpu_has(X86_FEATURE_ASI))
+		return 0;
 
 	VM_BUG_ON(name == NULL);
 
@@ -52,6 +57,9 @@ EXPORT_SYMBOL_GPL(asi_register_class);
 
 void asi_unregister_class(int index)
 {
+	if (!boot_cpu_has(X86_FEATURE_ASI))
+		return;
+
 	BUG_ON(!asi_index_valid(index));
 
 	spin_lock(&asi_class_lock);
@@ -63,11 +71,36 @@ void asi_unregister_class(int index)
 }
 EXPORT_SYMBOL_GPL(asi_unregister_class);
 
+void __init asi_check_boottime_disable(void)
+{
+	bool enabled = IS_ENABLED(CONFIG_ADDRESS_SPACE_ISOLATION_DEFAULT_ON);
+	char arg[4];
+	int ret;
+
+	ret = cmdline_find_option(boot_command_line, "asi", arg, sizeof(arg));
+	if (ret == 3 && !strncmp(arg, "off", 3)) {
+		enabled = false;
+		pr_info("ASI disabled through kernel command line.\n");
+	} else if (ret == 2 && !strncmp(arg, "on", 2)) {
+		enabled = true;
+		pr_info("Ignoring asi=on param while ASI implementation is incomplete.\n");
+	} else {
+		pr_info("ASI %s by default.\n",
+			enabled ? "enabled" : "disabled");
+	}
+
+	if (enabled)
+		pr_info("ASI enablement ignored due to incomplete implementation.\n");
+}
+
 int asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi)
 {
 	struct asi *asi;
 
 	*out_asi = NULL;
+
+	if (!boot_cpu_has(X86_FEATURE_ASI))
+		return 0;
 
 	BUG_ON(!asi_index_valid(asi_index));
 
@@ -96,7 +129,7 @@ EXPORT_SYMBOL_GPL(asi_init);
 
 void asi_destroy(struct asi *asi)
 {
-	if (!asi)
+	if (!boot_cpu_has(X86_FEATURE_ASI) || !asi)
 		return;
 
 	free_pages((ulong)asi->pgd, PGD_ALLOCATION_ORDER);
@@ -143,6 +176,9 @@ static noinstr void __asi_enter(void)
 
 noinstr void asi_enter(struct asi *asi)
 {
+	if (!static_asi_enabled())
+		return;
+
 	VM_WARN_ON_ONCE(!asi);
 
 	asi_set_target(current, asi);
@@ -154,8 +190,10 @@ EXPORT_SYMBOL_GPL(asi_enter);
 
 inline_or_noinstr void asi_relax(void)
 {
-	barrier();
-	asi_set_target(current, NULL);
+	if (static_asi_enabled()) {
+		barrier();
+		asi_set_target(current, NULL);
+	}
 }
 EXPORT_SYMBOL_GPL(asi_relax);
 
@@ -163,6 +201,9 @@ noinstr void asi_exit(void)
 {
 	u64 unrestricted_cr3;
 	struct asi *asi;
+
+	if (!static_asi_enabled())
+		return;
 
 	preempt_disable_notrace();
 
@@ -194,5 +235,8 @@ EXPORT_SYMBOL_GPL(asi_exit);
 
 void asi_init_mm_state(struct mm_struct *mm)
 {
+	if (!boot_cpu_has(X86_FEATURE_ASI))
+		return;
+
 	memset(mm->asi, 0, sizeof(mm->asi));
 }

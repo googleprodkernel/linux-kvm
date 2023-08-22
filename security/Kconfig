@@ -56,7 +56,10 @@ config ADDRESS_SPACE_ISOLATION
 	help
 	  This feature provides the ability to run some kernel code
 	  with a reduced kernel address space. This can be used to
-	  mitigate some speculative execution attacks.
+	  mitigate some speculative execution attacks. ASI enablement is
+	  controlled by setting asi=on or asi=off in the kernel command line.
+	  If not specified, the value of
+	  CONFIG_ADDRESS_SPACE_ISOLATION_DEFAULT_ON is used.
 
 	  The !PARAVIRT dependency is only because of lack of testing; in theory
 	  the code is written to work under paravirtualization. In practice
@@ -67,6 +70,14 @@ config ADDRESS_SPACE_ISOLATION
 	  direct-map region in order to implement local-nonsensitive memory.
 	  This dependencies will later be removed with extensions to the KASAN
 	  implementation.
+
+config ADDRESS_SPACE_ISOLATION_DEFAULT_ON
+	bool "Enable address space isolation by default"
+	default n
+	depends on ADDRESS_SPACE_ISOLATION
+	help
+	  If selected, ASI is enabled by default at boot if the asi=on or
+	  asi=off are not specified.
 
 config SECURITY_INFINIBAND
 	bool "Infiniband Security Hooks"
