@@ -3147,6 +3147,18 @@ static int nested_vmx_check_vmentry_hw(struct kvm_vcpu *vcpu)
 	 */
 	vmcs_writel(GUEST_RFLAGS, 0);
 
+	/*
+	 * Outside of the ASI critical section, an ASI-restricted CR3 is
+	 * unstable because an interrupt/NMI could cause a persistent asi_exit.
+	 * We can fix that by just asi_exiting. This is pretty costly when it
+	 * isn't a NOP; if that turns out to be affecting performance then we
+	 * could change the NOP case to an just asi_enter(), but we would also
+	 * have to asi_relax() once we no longer need the stable CR3 (i.e. after
+	 * __vmx_vcpu_run). Probably that would be best implemented as a
+	 * separate ASI API.
+	 */
+	asi_exit();
+
 	cr3 = __get_current_cr3_fast();
 	if (unlikely(cr3 != vmx->loaded_vmcs->host_state.cr3)) {
 		vmcs_writel(HOST_CR3, cr3);
