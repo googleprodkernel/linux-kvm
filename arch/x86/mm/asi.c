@@ -32,6 +32,8 @@ struct asi __asi_global_nonsensitive = {
 	.pgd = asi_global_nonsensitive_pgd,
 	.mm = &init_mm,
 };
+EXPORT_SYMBOL_IF_KUNIT(__asi_global_nonsensitive);
+
 
 static inline bool asi_class_registered(int index)
 {
@@ -736,6 +738,7 @@ int __must_check asi_map(struct asi *asi, void *addr, unsigned long len)
 {
 	return asi_map_gfp(asi, addr, len, GFP_KERNEL);
 }
+EXPORT_SYMBOL_IF_KUNIT(asi_map);
 
 /*
  * Unmap a kernel address range previously mapped into the ASI page tables.
@@ -781,6 +784,7 @@ void asi_unmap(struct asi *asi, void *addr, size_t len)
 
 	asi_flush_tlb_range(asi, addr, len);
 }
+EXPORT_SYMBOL_IF_KUNIT(asi_unmap);
 
 /*
  * This function is to copy the given unrestricted pgd entry for

@@ -13,6 +13,7 @@
 #include <linux/iommu.h>
 #include <asm/mmu.h>
 #include <asm/asi.h>
+#include <kunit/visibility.h>
 
 #ifndef INIT_MM_CONTEXT
 #define INIT_MM_CONTEXT(name)
@@ -59,3 +60,4 @@ void setup_initial_init_mm(void *start_code, void *end_code,
 	init_mm.end_data = (unsigned long)end_data;
 	init_mm.brk = (unsigned long)brk;
 }
+EXPORT_SYMBOL_IF_KUNIT(init_mm);

@@ -281,3 +281,4 @@ static struct kunit_suite asi_test_suite = {
 kunit_test_suite(asi_test_suite);
 
 MODULE_LICENSE("GPL");
+MODULE_IMPORT_NS(EXPORTED_FOR_KUNIT_TESTING);

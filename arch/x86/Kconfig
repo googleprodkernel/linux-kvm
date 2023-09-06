@@ -2540,7 +2540,7 @@ config MITIGATION_ADDRESS_SPACE_ISOLATION
 	  implementation.
 
 config ASI_KUNIT_TESTS
-	bool "KUnit tests for ASI" if !KUNIT_ALL_TESTS
+	tristate "KUnit tests for ASI" if !KUNIT_ALL_TESTS
 	depends on MITIGATION_ADDRESS_SPACE_ISOLATION && KUNIT
 	default KUNIT_ALL_TEST
 	help

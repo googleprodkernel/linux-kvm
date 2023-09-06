@@ -46,6 +46,7 @@
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/vmalloc.h>
+#include <kunit/visibility.h>
 
 #include "internal.h"
 #include "pgalloc-track.h"
