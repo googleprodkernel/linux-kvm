@@ -1029,6 +1029,39 @@ inline_or_noinstr u16 asi_pcid(struct asi *asi, u16 asid)
 	return kern_pcid(asid) | ((asi->pcid_index + 1) << ASI_PCID_BITS_SHIFT);
 }
 
+/*
+ * Make it safe to flush the current address space via CR3 read/write. This may
+ * involve flushing it immediately; in that case return true.
+ */
+static inline bool asi_flush_tlb_local(void)
+{
+	struct asi *asi = asi_get_current();
+	bool cpu_pcide = this_cpu_read(cpu_tlbstate.cr4) & X86_CR4_PCIDE;
+
+	/*
+	 * Restricted ASI CR3 is unstable outside of critical section. But if
+	 * unrestricted or inside critical section we don't need any special
+	 * logic for ASI.
+	 */
+	if (!asi || asi_in_critical_section())
+		return false;
+
+	if (boot_cpu_has(X86_FEATURE_INVPCID) && cpu_pcide) {
+		u16 loaded_mm_asid = this_cpu_read(cpu_tlbstate.loaded_mm_asid);
+
+		/*
+		 * Instead of costly asi_exit, just flush the restricted PCID.
+		 * This might not actually be the current PCID any more; that's
+		 * fine, asi_exit will have flushed for us.
+		 */
+		invpcid_flush_single_context(asi_pcid(asi, loaded_mm_asid));
+	} else {
+		asi_exit();
+		/* asi_exit flushes the TLB so we are done. */
+	}
+	return true;
+}
+
 void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len)
 {
 	flush_tlb_kernel_range((ulong)addr, (ulong)addr + len);
@@ -1037,6 +1070,7 @@ void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len)
 #else /* CONFIG_ADDRESS_SPACE_ISOLATION */
 
 u16 asi_pcid(struct asi *asi, u16 asid) { return kern_pcid(asid); }
+static bool asi_flush_tlb_local(void) { return false; }
 
 #endif /* CONFIG_ADDRESS_SPACE_ISOLATION */
 
@@ -1279,15 +1313,10 @@ STATIC_NOPV void native_flush_tlb_local(void)
 
 	invalidate_user_asid(this_cpu_read(cpu_tlbstate.loaded_mm_asid));
 
-	/*
-	 * Restricted ASI CR3 is unstable outside of critical section, so we
-	 * couldn't flush via a CR3 read/write.
-	 */
-	if (!asi_in_critical_section())
-		asi_exit();
-
-	/* If current->mm == NULL then the read_cr3() "borrows" an mm */
-	native_write_cr3(__native_read_cr3());
+	if (!asi_flush_tlb_local()) {
+		/* If current->mm == NULL then the read_cr3() "borrows" an mm */
+		native_write_cr3(__native_read_cr3());
+	}
 }
 
 void flush_tlb_local(void)
