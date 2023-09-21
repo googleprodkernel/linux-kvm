@@ -4913,6 +4913,24 @@ static void *svm_alloc_apic_backing_page(struct kvm_vcpu *vcpu)
 	return page_address(page);
 }
 
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+static noinstr void svm_pre_asi_exit(void)
+{
+	/*
+	 * If we've already IBPB'd immediately after VM Exit then no point doing
+	 * it again.
+	 */
+	if (cpu_feature_enabled(X86_FEATURE_IBPB_ON_VMEXIT))
+		return;
+
+	if (!cpu_feature_enabled(X86_FEATURE_IBPB))
+		return;
+
+	/* Flush out prediction trainings by the guest before we go to access secrets. */
+	wrmsrl(MSR_IA32_PRED_CMD, PRED_CMD_IBPB);
+}
+#endif
+
 static struct kvm_x86_ops svm_x86_ops __initdata = {
 	.name = KBUILD_MODNAME,
 
@@ -5043,6 +5061,12 @@ static struct kvm_x86_ops svm_x86_ops __initdata = {
 	.vcpu_deliver_sipi_vector = svm_vcpu_deliver_sipi_vector,
 	.vcpu_get_apicv_inhibit_reasons = avic_vcpu_get_apicv_inhibit_reasons,
 	.alloc_apic_backing_page = svm_alloc_apic_backing_page,
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+	.asi_hooks = {
+		.pre_asi_exit = svm_pre_asi_exit,
+	},
+#endif
 };
 
 /*

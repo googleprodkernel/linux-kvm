@@ -9753,7 +9753,7 @@ int kvm_x86_vendor_init(struct kvm_x86_init_ops *ops)
 	if (r)
 		goto out_free_percpu;
 
-	r = asi_register_class("KVM", NULL);
+	r = asi_register_class("KVM", &ops->runtime_ops->asi_hooks);
 	if (r < 0)
 		goto out_mmu_exit;
 	kvm_asi_index = r;
