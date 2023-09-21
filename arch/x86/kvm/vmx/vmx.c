@@ -6617,20 +6617,59 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu, fastpath_t exit_fastpath)
 	return ret;
 }
 
-/*
- * Software based L1D cache flush which is used when microcode providing
- * the cache control MSR is not loaded.
- *
- * The L1D cache is 32 KiB on Nehalem and later microarchitectures, but to
- * flush it is required to read in 64 KiB because the replacement algorithm
- * is not exactly LRU. This could be sized at runtime via topology
- * information but as all relevant affected CPUs have 32KiB L1D cache size
- * there is no point in doing so.
- */
-static noinstr void vmx_l1d_flush(struct kvm_vcpu *vcpu)
+/* Must be reentrant, for use by vmx_post_asi_enter */
+static inline_or_noinstr void vmx_really_l1d_flush(struct kvm_vcpu *vcpu)
 {
 	int size = PAGE_SIZE << L1D_CACHE_ORDER;
 
+	/*
+	 * In theory we lose some of these increments to reentrancy under ASI.
+	 * We just tolerate imprecise stats rather than deal with synchronizing.
+	 * Anyway in practice on 64 bit it's gonna be a single instruction.
+	 */
+	vcpu->stat.l1d_flush++;
+
+	if (static_cpu_has(X86_FEATURE_FLUSH_L1D)) {
+		native_wrmsrl(MSR_IA32_FLUSH_CMD, L1D_FLUSH);
+		return;
+	}
+
+	/*
+	 * Software based L1D cache flush which is used when microcode providing
+	 * the cache control MSR is not loaded.
+	 *
+	 * The L1D cache is 32 KiB on Nehalem and later microarchitectures, but
+	 * to flush it is required to read in 64 KiB because the replacement
+	 * algorithm is not exactly LRU. This could be sized at runtime via
+	 * topology information but as all relevant affected CPUs have 32KiB L1D
+	 * cache size there is no point in doing so.
+	 */
+	asm volatile(
+		/* First ensure the pages are in the TLB */
+		"xorl	%%eax, %%eax\n"
+		".Lpopulate_tlb_%=:\n\t"
+		"movzbl	(%[flush_pages], %%" _ASM_AX "), %%ecx\n\t"
+		"addl	$4096, %%eax\n\t"
+		"cmpl	%%eax, %[size]\n\t"
+		"jne	.Lpopulate_tlb_%=\n\t"
+		"xorl	%%eax, %%eax\n\t"
+		"cpuid\n\t"
+		/* Now fill the cache */
+		"xorl	%%eax, %%eax\n"
+		".Lfill_cache_%=:\n"
+		"movzbl	(%[flush_pages], %%" _ASM_AX "), %%ecx\n\t"
+		"addl	$64, %%eax\n\t"
+		"cmpl	%%eax, %[size]\n\t"
+		"jne	.Lfill_cache_%=\n\t"
+		"lfence\n"
+		:: [flush_pages] "r" (vmx_l1d_flush_pages),
+		    [size] "r" (size)
+		: "eax", "ebx", "ecx", "edx");
+}
+
+/* Actually only flushes conditionally. */
+static noinstr void vmx_l1d_flush(struct kvm_vcpu *vcpu)
+{
 	/*
 	 * This code is only executed when the flush mode is 'cond' or
 	 * 'always'
@@ -6657,34 +6696,7 @@ static noinstr void vmx_l1d_flush(struct kvm_vcpu *vcpu)
 			return;
 	}
 
-	vcpu->stat.l1d_flush++;
-
-	if (static_cpu_has(X86_FEATURE_FLUSH_L1D)) {
-		native_wrmsrl(MSR_IA32_FLUSH_CMD, L1D_FLUSH);
-		return;
-	}
-
-	asm volatile(
-		/* First ensure the pages are in the TLB */
-		"xorl	%%eax, %%eax\n"
-		".Lpopulate_tlb:\n\t"
-		"movzbl	(%[flush_pages], %%" _ASM_AX "), %%ecx\n\t"
-		"addl	$4096, %%eax\n\t"
-		"cmpl	%%eax, %[size]\n\t"
-		"jne	.Lpopulate_tlb\n\t"
-		"xorl	%%eax, %%eax\n\t"
-		"cpuid\n\t"
-		/* Now fill the cache */
-		"xorl	%%eax, %%eax\n"
-		".Lfill_cache:\n"
-		"movzbl	(%[flush_pages], %%" _ASM_AX "), %%ecx\n\t"
-		"addl	$64, %%eax\n\t"
-		"cmpl	%%eax, %[size]\n\t"
-		"jne	.Lfill_cache\n\t"
-		"lfence\n"
-		:: [flush_pages] "r" (vmx_l1d_flush_pages),
-		    [size] "r" (size)
-		: "eax", "ebx", "ecx", "edx");
+	vmx_really_l1d_flush(vcpu);
 }
 
 static void vmx_update_cr8_intercept(struct kvm_vcpu *vcpu, int tpr, int irr)
@@ -8290,6 +8302,21 @@ gva_t vmx_get_untagged_addr(struct kvm_vcpu *vcpu, gva_t gva, unsigned int flags
 	 */
 	return (sign_extend64(gva, lam_bit) & ~BIT_ULL(63)) | (gva & BIT_ULL(63));
 }
+
+#ifdef CONFIG_ADDRESS_SPACE_ISOLATION
+static noinstr void vmx_post_asi_enter(void)
+{
+	struct kvm_vcpu *vcpu = kvm_get_running_vcpu();
+
+	vcpu_stats_update_asi_enter(vcpu);
+	vmx_really_l1d_flush(vcpu);
+}
+
+static noinstr void vmx_pre_asi_exit(enum asi_exit_reason reason)
+{
+	vcpu_stats_update_asi_exit(kvm_get_running_vcpu(), reason);
+}
+#endif
 
 static struct kvm_x86_ops vmx_x86_ops __initdata = {
 	.name = KBUILD_MODNAME,
