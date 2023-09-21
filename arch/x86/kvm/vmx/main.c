@@ -164,4 +164,11 @@ struct kvm_x86_init_ops vt_init_ops __initdata = {
 
 	.runtime_ops = &vt_x86_ops,
 	.pmu_ops = &intel_pmu_ops,
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+	/*
+	 * Only Intel CPUs currently do anything in post-enter, so this is a
+	 * vendor hook for now.
+	 */
+	.post_asi_enter = vmx_post_asi_enter,
+#endif
 };

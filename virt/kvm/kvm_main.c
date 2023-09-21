@@ -6313,7 +6313,7 @@ static void kvm_sched_out(struct preempt_notifier *pn,
  * the per-CPU value later will give us the same value as we update the
  * per-CPU variable in the preempt notifier handlers.
  */
-struct kvm_vcpu *kvm_get_running_vcpu(void)
+inline_or_noinstr struct kvm_vcpu *kvm_get_running_vcpu(void)
 {
 	struct kvm_vcpu *vcpu;
 

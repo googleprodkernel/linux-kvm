@@ -9711,6 +9711,36 @@ static void kvm_x86_check_cpu_compat(void *ret)
 	*(int *)ret = kvm_x86_check_processor_compatibility();
 }
 
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+
+static noinstr void pre_asi_exit(void)
+{
+	/*
+	 * Flush out prediction trainings by the guest before we go to access
+	 * secrets.
+	 */
+
+	/* Clear normal indirect branch predictions, if we haven't */
+	if (cpu_feature_enabled(X86_FEATURE_IBPB) &&
+	    !cpu_feature_enabled(X86_FEATURE_IBPB_ON_VMEXIT))
+		__wrmsr(MSR_IA32_PRED_CMD, PRED_CMD_IBPB, 0);
+
+	/* Flush the RAS/RSB if we haven't already. */
+	if (!IS_ENABLED(CONFIG_RETPOLINE) ||
+	    !cpu_feature_enabled(X86_FEATURE_RSB_VMEXIT))
+		fill_return_buffer();
+}
+
+struct asi_hooks asi_hooks = {
+	.pre_asi_exit = pre_asi_exit,
+	/* post_asi_enter populated later. */
+};
+
+#else /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
+struct asi_hooks asi_hooks = {};
+#endif /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
+
+
 int kvm_x86_vendor_init(struct kvm_x86_init_ops *ops)
 {
 	u64 host_pat;
@@ -9774,7 +9804,10 @@ int kvm_x86_vendor_init(struct kvm_x86_init_ops *ops)
 	kvm_caps.supported_vm_types = BIT(KVM_X86_DEFAULT_VM);
 	kvm_caps.supported_mce_cap = MCG_CTL_P | MCG_SER_P;
 
-	r = asi_register_class("KVM", NULL);
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+	asi_hooks.post_asi_enter = ops->post_asi_enter;
+#endif
+	r = asi_register_class("KVM", &asi_hooks);
 	if (r < 0)
 		goto out_mmu_exit;
 	kvm_asi_index = r;

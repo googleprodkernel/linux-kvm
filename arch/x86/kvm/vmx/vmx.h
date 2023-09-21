@@ -755,4 +755,8 @@ static inline bool vmx_can_use_ipiv(struct kvm_vcpu *vcpu)
 	return  lapic_in_kernel(vcpu) && enable_ipiv;
 }
 
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+noinstr void vmx_post_asi_enter(void);
+#endif
+
 #endif /* __KVM_X86_VMX_H */
