@@ -7,6 +7,8 @@
 #include <linux/init.h>
 #include <linux/pgtable.h>
 
+#include <kunit/visibility.h>
+
 #include <asm/cmdline.h>
 #include <asm/page.h>
 #include <asm/pgalloc.h>
@@ -14,6 +16,7 @@
 #include <asm/traps.h>
 #include <asm/pgtable.h>
 
+#include "asi_internal.h"
 #include "mm_internal.h"
 #include "../../../mm/internal.h"
 
@@ -540,7 +543,7 @@ static bool is_page_within_range(unsigned long addr, unsigned long page_size,
 	return page_start >= range_start && page_end <= range_end;
 }
 
-static bool follow_physaddr(
+VISIBLE_IF_KUNIT bool follow_physaddr(
 	pgd_t *pgd_table, unsigned long virt,
 	phys_addr_t *phys, unsigned long *page_size, ulong *flags)
 {
@@ -608,6 +611,7 @@ static bool follow_physaddr(
 	pte_unmap(pte);
 	return true;
 }
+EXPORT_SYMBOL_IF_KUNIT(follow_physaddr);
 
 /*
  * Map the given range into the ASI page tables. The source of the mapping is

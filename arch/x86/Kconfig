@@ -2539,6 +2539,13 @@ config MITIGATION_ADDRESS_SPACE_ISOLATION
 	  This dependencies will later be removed with extensions to the KASAN
 	  implementation.
 
+config ASI_KUNIT_TESTS
+	bool "KUnit tests for ASI" if !KUNIT_ALL_TESTS
+	depends on MITIGATION_ADDRESS_SPACE_ISOLATION && KUNIT
+	default KUNIT_ALL_TEST
+	help
+	  Builds the KUnit tests for ASI.
+
 config ADDRESS_SPACE_ISOLATION_DEFAULT_ON
 	bool "Enable address space isolation by default"
 	default n
