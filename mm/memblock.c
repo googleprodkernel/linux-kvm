@@ -2234,6 +2234,50 @@ void __init memblock_free_all(void)
 	totalram_pages_add(pages);
 }
 
+/*
+ * Map the reserved regions to restricted address spaces.
+ * This must be called before the reserved memblock data structures
+ * are discarded, but after the page allocator is ready (asi_map()
+ * depends on that).
+ */
+void __meminit memblock_asi_map_reserved(void)
+{
+	phys_addr_t start, end;
+	unsigned long pfn;
+	struct page *page;
+	int ret;
+	u64 i;
+
+	if (!static_asi_enabled())
+		return;
+
+	/* Map the reserved regions to restricted address spaces */
+	for_each_reserved_mem_range(i, &start, &end) {
+		for (pfn = PFN_DOWN(start); pfn < PFN_UP(end); pfn++) {
+			if (!pfn_valid(pfn))
+				continue;
+
+			page = pfn_to_page(pfn);
+			if (WARN_ON_ONCE(!PageReserved(page)) ||
+			    PageGlobalNonSensitive(page))
+				continue;
+
+			ret = asi_map(ASI_GLOBAL_NONSENSITIVE,
+				      __va(pfn << PAGE_SHIFT), PAGE_SIZE);
+			if (ret) {
+				/*
+				 * -ENXIO means the page is not mapped in the
+				 *  normal page table.
+				 */
+				WARN_ON_ONCE(ret != -ENXIO);
+				continue;
+			}
+
+			__SetPageGlobalNonSensitive(page);
+		}
+	}
+}
+
 #if defined(CONFIG_DEBUG_FS) && defined(CONFIG_ARCH_KEEP_MEMBLOCK)
 static const char * const flagname[] = {
 	[ilog2(MEMBLOCK_HOTPLUG)] = "HOTPLUG",

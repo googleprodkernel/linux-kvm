@@ -2696,6 +2696,7 @@ void __init mm_core_init(void)
 	/* Initializations relying on SMP setup */
 	build_all_zonelists(NULL);
 	page_alloc_init_cpuhp();
+	page_alloc_init_asi();
 
 	/*
 	 * page_ext requires contiguous pages,

@@ -4487,8 +4487,6 @@ struct asi_async_free_cpu_state {
 };
 static DEFINE_PER_CPU(struct asi_async_free_cpu_state, asi_async_free_cpu_state);
 
-static bool async_free_work_initialized;
-
 static void asi_async_free_work_fn(struct work_struct *work)
 {
 	struct asi_async_free_cpu_state *cpu_state =
@@ -4533,17 +4531,19 @@ static bool asi_async_free_enqueue(struct page *page, unsigned int order)
 	cpu_state = this_cpu_ptr(&asi_async_free_cpu_state);
 	set_page_private(page, order);
 	list_add(&page->lru, &cpu_state->to_free);
+	if (mm_percpu_wq)
+		queue_work_on(smp_processor_id(), mm_percpu_wq, &cpu_state->work);
 	local_irq_restore(flags);
 
 	return true;
 }
 
-static int __init asi_page_alloc_init(void)
+void __init page_alloc_init_asi(void)
 {
 	int cpu;
 
 	if (!static_asi_enabled())
-		return 0;
+		return;
 
 	for_each_possible_cpu(cpu) {
 		struct asi_async_free_cpu_state *cpu_state
@@ -4552,19 +4552,7 @@ static int __init asi_page_alloc_init(void)
 		INIT_WORK(&cpu_state->work, asi_async_free_work_fn);
 		INIT_LIST_HEAD(&cpu_state->to_free);
 	}
-
-	/*
-	 * This function is called before SMP is initialized, so we can assume
-	 * that this is the only running CPU at this point.
-	 */
-
-	barrier();
-	async_free_work_initialized = true;
-	barrier();
-
-	return 0;
 }
-early_initcall(asi_page_alloc_init);
 
 static int asi_map_alloced_pages(struct page *page, uint order, gfp_t gfp_mask)
 {

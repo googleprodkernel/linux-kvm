@@ -137,6 +137,8 @@ void memblock_free_all(void);
 void memblock_free(void *ptr, size_t size);
 void reset_all_zones_managed_pages(void);
 
+void memblock_asi_map_reserved(void);
+
 /* Low level functions */
 void __next_mem_range(u64 *idx, int nid, enum memblock_flags flags,
 		      struct memblock_type *type_a,

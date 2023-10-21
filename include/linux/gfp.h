@@ -388,6 +388,11 @@ extern void page_frag_free(void *addr);
 #define __free_page(page) __free_pages((page), 0)
 #define free_page(addr) free_pages((addr), 0)
 
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+void page_alloc_init_asi(void);
+#else
+static inline void page_alloc_init_asi(void) { }
+#endif
 void page_alloc_init_cpuhp(void);
 int decay_pcp_high(struct zone *zone, struct per_cpu_pages *pcp);
 void drain_zone_pages(struct zone *zone, struct per_cpu_pages *pcp);
