@@ -13,6 +13,7 @@
 #include <kunit/test.h>
 
 #include <asm/asi.h>
+#include <asm/set_memory.h>
 
 #include "asi_internal.h"
 
@@ -249,9 +250,206 @@ static void test_asi_map_global_nonsensitive(struct kunit *test)
 	KUNIT_EXPECT_FALSE(test, addr_present(restricted_pgd, va_1));
 }
 
+static pte_t *lookup_address_asi_global(unsigned long addr, int *level)
+{
+	pgd_t *restricted_pgd = asi_pgd(ASI_GLOBAL_NONSENSITIVE);
+
+	return lookup_address_in_pgd(pgd_offset_pgd(restricted_pgd, addr),
+				     addr, level);
+}
+
+static void action_vunmap(void *ctx)
+{
+	vunmap(ctx);
+}
+
+static void *do_vmap(struct kunit *test, struct page **pages,
+		     unsigned int count, unsigned long flags, pgprot_t prot)
+{
+	void *addr = vmap(pages, count, flags, prot);
+
+	KUNIT_ASSERT_NOT_NULL(test, addr);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, action_vunmap, addr), 0);
+	return addr;
+}
+
+static void test_change_page_attr(struct kunit *test)
+{
+	pte_t *ptep, *restricted_ptep;
+	unsigned long laddr, vaddr;
+	struct page *page;
+	int level;
+
+	kunit_skip(test, "Not yet supported in this branch");
+
+	/*
+	 * Allocate a page and make sure it's mapped by a 4K mapping in the
+	 * unrestricted page tables so that the mapping is equivalent to that in
+	 * the restricted page tables.
+	 */
+	page = do_alloc_pages(test, GFP_KERNEL, 0);
+	laddr = (unsigned long)page_to_virt(page);
+	set_memory_4k(laddr, 1);
+
+	/*
+	 * Check that the allocated page has equal a writeable mapping in
+	 * both the restricted and unrestricted page tables.
+	 */
+	ptep = lookup_address(laddr, &level);
+	KUNIT_ASSERT_NOT_NULL(test, ptep);
+
+	restricted_ptep = lookup_address_asi_global(laddr, &level);
+	KUNIT_ASSERT_NOT_NULL(test, restricted_ptep);
+
+	KUNIT_EXPECT_EQ(test, pte_val(*restricted_ptep), pte_val(*ptep));
+	KUNIT_EXPECT_TRUE(test, pte_write(*restricted_ptep));
+
+	/* Now make the page read-only in the direct map */
+	set_memory_ro(laddr, 1);
+
+	/* Check that the direct map mappings are still equal, but are now RO */
+	ptep = lookup_address(laddr, &level);
+	KUNIT_ASSERT_NOT_NULL(test, ptep);
+
+	restricted_ptep = lookup_address_asi_global(laddr, &level);
+	KUNIT_ASSERT_NOT_NULL(test, restricted_ptep);
+
+	KUNIT_EXPECT_EQ(test, pte_val(*restricted_ptep), pte_val(*ptep));
+	KUNIT_EXPECT_FALSE(test, pte_write(*restricted_ptep));
+
+	/* Restore the mappings to RW and check again */
+	set_memory_rw(laddr, 1);
+
+	ptep = lookup_address(laddr, &level);
+	KUNIT_ASSERT_NOT_NULL(test, ptep);
+
+	restricted_ptep = lookup_address_asi_global(laddr, &level);
+	KUNIT_ASSERT_NOT_NULL(test, restricted_ptep);
+
+	KUNIT_EXPECT_EQ(test, pte_val(*restricted_ptep), pte_val(*ptep));
+	KUNIT_EXPECT_TRUE(test, pte_write(*restricted_ptep));
+
+	/*
+	 * Check that vmap creates an equal writeable mapping in the vmalloc
+	 * address space in both the restricted and unrestricted page tables.
+	 */
+	vaddr = (unsigned long)do_vmap(test, &page, 1, VM_MAP, PAGE_KERNEL);
+	ptep = lookup_address(vaddr, &level);
+	KUNIT_ASSERT_NOT_NULL(test, ptep);
+
+	restricted_ptep = lookup_address_asi_global(vaddr, &level);
+	KUNIT_ASSERT_NOT_NULL(test, restricted_ptep);
+
+	KUNIT_EXPECT_EQ(test, pte_val(*restricted_ptep), pte_val(*ptep));
+	KUNIT_EXPECT_TRUE(test, pte_write(*restricted_ptep));
+
+	/*
+	 * Set the memory to RO again using the vmap address. The same
+	 * operations should apply to the direct map aliases as well.
+	 */
+	set_memory_ro(vaddr, 1);
+
+	/* Check that the vmap mappings are still equal, but are now RO */
+	ptep = lookup_address(vaddr, &level);
+	KUNIT_ASSERT_NOT_NULL(test, ptep);
+
+	restricted_ptep = lookup_address_asi_global(vaddr, &level);
+	KUNIT_ASSERT_NOT_NULL(test, restricted_ptep);
+
+	KUNIT_EXPECT_EQ(test, pte_val(*restricted_ptep), pte_val(*ptep));
+	KUNIT_EXPECT_FALSE(test, pte_write(*restricted_ptep));
+
+	/* Check that direct map mappings are still equal, but are now RO */
+	ptep = lookup_address(laddr, &level);
+	KUNIT_ASSERT_NOT_NULL(test, ptep);
+
+	restricted_ptep = lookup_address_asi_global(laddr, &level);
+	KUNIT_ASSERT_NOT_NULL(test, restricted_ptep);
+
+	KUNIT_EXPECT_EQ(test, pte_val(*restricted_ptep), pte_val(*ptep));
+	KUNIT_EXPECT_FALSE(test, pte_write(*restricted_ptep));
+
+	/*
+	 * Reset the mappings to RW as some debug code on the page free path
+	 * writes to freed pages to poison them.
+	 */
+	set_memory_rw(vaddr, 1);
+}
+
+/*
+ * In more recent kernels with large mappings support in vmalloc (v5.13+), this
+ * test can be simplified by using a large vmalloc mapping instead of trying to
+ * find an existing large mapping in the direct map.
+ */
+static void test_change_page_attr_split_mapping(struct kunit *test)
+{
+	int pmd_order = PMD_SHIFT - PAGE_SHIFT;
+	pte_t *ptep, *restricted_ptep;
+	unsigned long addr, laddr;
+	struct page *page;
+	int retries = 100;
+	int level;
+
+	kunit_skip(test, "Not yet supported in this branch");
+
+	if (!boot_cpu_has(X86_FEATURE_PSE))
+		kunit_skip(test, "Large mappings are not supported by the CPU");
+
+	/*
+	 * In probe_page_size_mask(), only small mappings are used in the direct
+	 * map if debug_pagealloc_enabled() is true.
+	 */
+	if (debug_pagealloc_enabled())
+		kunit_skip(test, "No large mappings in the direct map");
+
+	/* Try to allocate pages with a large mapping in the direct map */
+	do {
+		page = do_alloc_pages(test, GFP_KERNEL, pmd_order);
+		laddr = (unsigned long)page_to_virt(page);
+		ptep = lookup_address(laddr, &level);
+		KUNIT_ASSERT_NOT_NULL(test, ptep);
+
+		if (level < PG_LEVEL_2M)
+			continue;
+
+		/*
+		 * Check that the allocated pages have a large mapping in the
+		 * ASI page tables as well.  ASI may use 4K mappings even if the
+		 * direct map has a 2M mapping if the PMD was already pointing
+		 * at a PTEs page as we never free page table pages in ASI.
+		 */
+		restricted_ptep = lookup_address_asi_global(laddr, &level);
+		KUNIT_ASSERT_NOT_NULL(test, restricted_ptep);
+		if (level >= PG_LEVEL_2M)
+			break;
+	} while (--retries);
+
+	if (level < PG_LEVEL_2M)
+		kunit_skip(test, "Could not find pages with a large mapping");
+
+	/*
+	 * Split the mappings into 4K mappings, and check that they are
+	 * equivalent in both the restricted and unrestricted page tables.
+	 */
+	set_memory_4k(laddr, 1 << pmd_order);
+	for (addr = laddr; addr < laddr + PMD_SIZE; addr += PAGE_SIZE) {
+		ptep = lookup_address(addr, &level);
+		KUNIT_ASSERT_NOT_NULL(test, ptep);
+		KUNIT_EXPECT_EQ(test, level, PG_LEVEL_4K);
+
+		restricted_ptep = lookup_address_asi_global(addr, &level);
+		KUNIT_ASSERT_NOT_NULL(test, restricted_ptep);
+		KUNIT_EXPECT_EQ(test, level, PG_LEVEL_4K);
+
+		KUNIT_EXPECT_EQ(test, pte_val(*restricted_ptep), pte_val(*ptep));
+	}
+}
+
 static struct kunit_case asi_test_cases[] = {
 	KUNIT_CASE(test_asi_state),
 	KUNIT_CASE(test_asi_map_global_nonsensitive),
+	KUNIT_CASE(test_change_page_attr),
+	KUNIT_CASE(test_change_page_attr_split_mapping),
 	{}
 };
 
