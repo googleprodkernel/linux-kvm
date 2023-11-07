@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include <linux/gfp.h>
 #include <linux/kernel.h>
+#include <linux/kthread.h>
 #include <linux/mm_types.h>
 #include <linux/mm.h>
 #include <linux/pgtable.h>
@@ -29,7 +30,70 @@
  *    struct foo_ctx.
  *  - Test functions start with test_. Note they don't need "asi" in the name
  *    because they are already namespaced within the "asi" test suite.
+ *
+ * A few things to be careful about when writing tests:
+ * - Do not use KUNIT_ASSERT_* in ASI critical sections, only KUNIT_EXPECT_*. If
+ *   the former fails, it stops running the test thread and runs cleanup actions
+ *   in a different thread, which tries to context switch in the critical
+ *   section.
  */
+
+struct asi_test_info {
+	int                     index;
+	struct asi              *asi;
+	struct mm_struct	*mm;
+	struct asi_hooks        *ops;
+};
+
+static void action_mmdrop(void *ctx)
+{
+	mmdrop((struct mm_struct *)ctx);
+}
+
+static void action_kthread_unuse_mm(void *ctx)
+{
+	struct mm_struct *mm = ctx;
+
+	if (current->mm == mm)
+		kthread_unuse_mm(mm);
+}
+
+static void action_asi_unregister_class(void *ctx)
+{
+	asi_unregister_class((int)(uintptr_t)ctx);
+}
+
+static void action_asi_destroy(void *ctx)
+{
+	asi_destroy((struct asi *)ctx);
+}
+
+static struct asi_test_info *setup_test_asi(struct kunit *test,
+					    struct asi_hooks *ops)
+{
+	struct asi_test_info *info;
+
+	if (!static_asi_enabled())
+		kunit_skip(test, "ASI disabled. Set asi=on in kmdline to run test");
+
+	info = kunit_kzalloc(
+			test, sizeof(struct asi_test_info), GFP_KERNEL);
+	info->ops = ops;
+
+	info->index = asi_register_class("test-asi", info->ops);
+	KUNIT_ASSERT_GE(test, info->index, 0);
+	kunit_add_action(test, action_asi_unregister_class, (void *)(uintptr_t)info->index);
+
+	info->mm = mm_alloc();
+	KUNIT_ASSERT_NOT_NULL(test, info->mm);
+	kunit_add_action(test, action_mmdrop, info->mm);
+	kthread_use_mm(info->mm);
+	kunit_add_action(test, action_kthread_unuse_mm, info->mm);
+
+	KUNIT_ASSERT_GE(test, 0, asi_init(info->mm, info->index, &info->asi));
+	kunit_add_action(test, action_asi_destroy, info->asi);
+	return info;
+}
 
 struct free_pages_ctx {
 	unsigned int order;
