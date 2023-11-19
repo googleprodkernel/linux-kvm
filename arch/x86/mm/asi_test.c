@@ -445,9 +445,67 @@ static void test_change_page_attr_split_mapping(struct kunit *test)
 	}
 }
 
+static void action_free_percpu(void __percpu *ptr)
+{
+	free_percpu(ptr);
+}
+
+static void __percpu *do___alloc_percpu(struct kunit *test, size_t sz, size_t align)
+{
+	void __percpu *pcpu;
+	int r;
+
+	pcpu = __alloc_percpu(sz, align);
+	KUNIT_ASSERT_NOT_NULL(test, pcpu);
+
+	r = kunit_add_action_or_reset(test, action_free_percpu, pcpu);
+	KUNIT_ASSERT_EQ(test, r, 0);
+
+	return pcpu;
+}
+
+static DEFINE_PER_CPU(uint64_t, static_percpu_data);
+#define DYNAMIC_PCPU_BUF_SZ	(PAGE_SIZE * 2)
+
+/*
+ * Verify that statically allocated percpu memory and dynamically
+ * allocated percpu memory are mapped in the restricted address space.
+ */
+static void test_percpu_alloc(struct kunit *test)
+{
+	struct asi *asi = ASI_GLOBAL_NONSENSITIVE;
+	pgd_t *unrestricted_pgd = init_mm.pgd;
+	pgd_t *restricted_pgd = asi->pgd;
+	uint64_t __percpu *dynamic_pcpu;
+	uint64_t test_end_offset = 8;
+	uint64_t base, end;
+	int cpu;
+
+	BUILD_BUG_ON(test_end_offset > DYNAMIC_PCPU_BUF_SZ);
+
+	dynamic_pcpu = do___alloc_percpu(test, DYNAMIC_PCPU_BUF_SZ, PAGE_SIZE);
+	for_each_possible_cpu(cpu) {
+		/* Test statically allocated per-cpu data */
+		base = (uint64_t)per_cpu_ptr(&static_percpu_data, cpu);
+
+		KUNIT_EXPECT_TRUE(test, addr_present(unrestricted_pgd, base));
+		KUNIT_EXPECT_TRUE(test, addr_present(restricted_pgd, base));
+
+		/* Test dynamically allocated per-cpu data */
+		base = (uint64_t)per_cpu_ptr(dynamic_pcpu, cpu);
+		end = base + DYNAMIC_PCPU_BUF_SZ - test_end_offset;
+
+		KUNIT_EXPECT_TRUE(test, addr_present(unrestricted_pgd, base));
+		KUNIT_EXPECT_TRUE(test, addr_present(unrestricted_pgd, end));
+		KUNIT_EXPECT_TRUE(test, addr_present(restricted_pgd, base));
+		KUNIT_EXPECT_TRUE(test, addr_present(restricted_pgd, end));
+	}
+}
+
 static struct kunit_case asi_test_cases[] = {
 	KUNIT_CASE(test_asi_state),
 	KUNIT_CASE(test_asi_map_global_nonsensitive),
+	KUNIT_CASE(test_percpu_alloc),
 	KUNIT_CASE(test_change_page_attr),
 	KUNIT_CASE(test_change_page_attr_split_mapping),
 	{}
