@@ -247,6 +247,49 @@ static bool amd_is_rdpmc_passthru_allowed(struct kvm_vcpu *vcpu)
 	return true;
 }
 
+static void amd_passthrough_pmu_msrs(struct kvm_vcpu *vcpu)
+{
+	struct kvm_pmu *pmu = vcpu_to_pmu(vcpu);
+	struct vcpu_svm *svm = to_svm(vcpu);
+	int msr_clear = !!(is_passthrough_pmu_enabled(vcpu));
+	int i;
+
+	for (i = 0; i < kvm_pmu_cap.num_counters_gp; i++) {
+		/*
+		 * PERF_CTLx registers require interception in order to clear
+		 * HostOnly bit and set GuestOnly bit. This is to prevent the
+		 * PERF_CTRx registers from counting before VM entry and after
+		 * VM exit.
+		 */
+		set_msr_interception(vcpu, svm->msrpm, MSR_F15H_PERF_CTL + 2 * i, 0, 0);
+
+		/*
+		 * Pass through counters exposed to the guest and intercept
+		 * counters that are unexposed. Do this explicitly since this
+		 * function may be set multiple times before vcpu runs.
+		 */
+		if (i >= pmu->nr_arch_gp_counters)
+			msr_clear = 0;
+		set_msr_interception(vcpu, svm->msrpm, MSR_F15H_PERF_CTR + 2 * i, msr_clear, msr_clear);
+	}
+
+	/*
+	 * In mediated passthrough vPMU, intercept global PMU MSRs when guest
+	 * PMU only owns a subset of counters provided in HW or its version is
+	 * less than 2.
+	 */
+	if (is_passthrough_pmu_enabled(vcpu) && pmu->version > 1 &&
+	    pmu->nr_arch_gp_counters == kvm_pmu_cap.num_counters_gp)
+		msr_clear = 1;
+	else
+		msr_clear = 0;
+
+	set_msr_interception(vcpu, svm->msrpm, MSR_AMD64_PERF_CNTR_GLOBAL_CTL, msr_clear, msr_clear);
+	set_msr_interception(vcpu, svm->msrpm, MSR_AMD64_PERF_CNTR_GLOBAL_STATUS, msr_clear, msr_clear);
+	set_msr_interception(vcpu, svm->msrpm, MSR_AMD64_PERF_CNTR_GLOBAL_STATUS_CLR, msr_clear, msr_clear);
+	set_msr_interception(vcpu, svm->msrpm, MSR_AMD64_PERF_CNTR_GLOBAL_STATUS_SET, msr_clear, msr_clear);
+}
+
 struct kvm_pmu_ops amd_pmu_ops __initdata = {
 	.rdpmc_ecx_to_pmc = amd_rdpmc_ecx_to_pmc,
 	.msr_idx_to_pmc = amd_msr_idx_to_pmc,
@@ -257,6 +300,7 @@ struct kvm_pmu_ops amd_pmu_ops __initdata = {
 	.refresh = amd_pmu_refresh,
 	.init = amd_pmu_init,
 	.is_rdpmc_passthru_allowed = amd_is_rdpmc_passthru_allowed,
+	.passthrough_pmu_msrs = amd_passthrough_pmu_msrs,
 	.EVENTSEL_EVENT = AMD64_EVENTSEL_EVENT,
 	.MAX_NR_GP_COUNTERS = KVM_AMD_PMC_MAX_GENERIC,
 	.MIN_NR_GP_COUNTERS = AMD64_NUM_COUNTERS,
