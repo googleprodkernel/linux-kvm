@@ -165,7 +165,12 @@ static int amd_pmu_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		data &= ~pmu->reserved_bits;
 		if (data != pmc->eventsel) {
 			pmc->eventsel = data;
-			kvm_pmu_request_counter_reprogram(pmc);
+			if (is_passthrough_pmu_enabled(vcpu)) {
+				data &= ~AMD64_EVENTSEL_HOSTONLY;
+				pmc->eventsel_hw = data | AMD64_EVENTSEL_GUESTONLY;
+			} else {
+				kvm_pmu_request_counter_reprogram(pmc);
+			}
 		}
 		return 0;
 	}
