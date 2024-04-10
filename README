@@ -13,3 +13,6 @@ TODO:
 
 - Because of ea4654e0885348, rename
   CONFIG_{,MITIGATION_}ADDRESS_SPACE_ISOLATION
+
+- objtool assumes that indirect function calls are to non-noinstr sections. But
+  ASI makes indirect calls from noinstr.
