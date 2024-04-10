@@ -8,3 +8,8 @@ cleaned out.
 
 This is a version of ASI with out local-nonsensitive, and without any attempt to
 mitigate cross-SMT attacks.
+
+TODO:
+
+- Because of ea4654e0885348, rename
+  CONFIG_{,MITIGATION_}ADDRESS_SPACE_ISOLATION
