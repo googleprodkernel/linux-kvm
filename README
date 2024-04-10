@@ -16,3 +16,5 @@ TODO:
 
 - objtool assumes that indirect function calls are to non-noinstr sections. But
   ASI makes indirect calls from noinstr.
+
+- Move stuff out of arch/? Maybe not necessary for RFC?
