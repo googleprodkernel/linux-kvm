@@ -18,3 +18,6 @@ TODO:
   ASI makes indirect calls from noinstr.
 
 - Move stuff out of arch/? Maybe not necessary for RFC?
+
+- Should add extra mitigations to ASI hooks. Consider doing this with respect
+  for the existing mitigations= flags.
