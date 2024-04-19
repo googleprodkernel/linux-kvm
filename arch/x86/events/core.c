@@ -705,6 +705,8 @@ void x86_perf_guest_enter(u32 guest_lvtpc)
 {
 	lockdep_assert_irqs_disabled();
 
+	perf_guest_enter();
+
 	apic_write(APIC_LVTPC, APIC_DM_FIXED | KVM_GUEST_PMI_VECTOR |
 			       (guest_lvtpc & APIC_LVT_MASKED));
 }
@@ -715,6 +717,8 @@ void x86_perf_guest_exit(void)
 	lockdep_assert_irqs_disabled();
 
 	apic_write(APIC_LVTPC, APIC_DM_NMI);
+
+	perf_guest_exit();
 }
 EXPORT_SYMBOL_GPL(x86_perf_guest_exit);
 
