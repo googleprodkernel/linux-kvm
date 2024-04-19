@@ -510,12 +510,27 @@ static int reprogram_counter(struct kvm_pmc *pmc)
 				     eventsel & ARCH_PERFMON_EVENTSEL_INT);
 }
 
+static void kvm_pmu_handle_event_in_passthrough_pmu(struct kvm_vcpu *vcpu)
+{
+	struct kvm_pmu *pmu = vcpu_to_pmu(vcpu);
+
+	static_call_cond(kvm_x86_pmu_set_overflow)(vcpu);
+
+	if (atomic64_read(&pmu->__reprogram_pmi)) {
+		kvm_make_request(KVM_REQ_PMI, vcpu);
+		atomic64_set(&pmu->__reprogram_pmi, 0ull);
+	}
+}
+
 void kvm_pmu_handle_event(struct kvm_vcpu *vcpu)
 {
 	DECLARE_BITMAP(bitmap, X86_PMC_IDX_MAX);
 	struct kvm_pmu *pmu = vcpu_to_pmu(vcpu);
 	struct kvm_pmc *pmc;
 	int bit;
+
+	if (is_passthrough_pmu_enabled(vcpu))
+		return kvm_pmu_handle_event_in_passthrough_pmu(vcpu);
 
 	bitmap_copy(bitmap, pmu->reprogram_pmi, X86_PMC_IDX_MAX);
 
@@ -848,6 +863,17 @@ void kvm_pmu_destroy(struct kvm_vcpu *vcpu)
 	kvm_pmu_reset(vcpu);
 }
 
+static void kvm_passthrough_pmu_incr_counter(struct kvm_vcpu *vcpu, struct kvm_pmc *pmc)
+{
+	if (static_call(kvm_x86_pmu_incr_counter)(pmc)) {
+		__set_bit(pmc->idx, (unsigned long *)&pmc_to_pmu(pmc)->global_status);
+		kvm_make_request(KVM_REQ_PMU, vcpu);
+
+		if (pmc->eventsel & ARCH_PERFMON_EVENTSEL_INT)
+			set_bit(pmc->idx, (unsigned long *)&pmc_to_pmu(pmc)->reprogram_pmi);
+	}
+}
+
 static void kvm_pmu_incr_counter(struct kvm_pmc *pmc)
 {
 	pmc->emulated_counter++;
@@ -880,11 +906,13 @@ static inline bool cpl_is_matched(struct kvm_pmc *pmc)
 	return (static_call(kvm_x86_get_cpl)(pmc->vcpu) == 0) ? select_os : select_user;
 }
 
-void kvm_pmu_trigger_event(struct kvm_vcpu *vcpu, u64 eventsel)
+static void __kvm_pmu_trigger_event(struct kvm_vcpu *vcpu, u64 eventsel,
+				    bool is_passthrough)
 {
 	DECLARE_BITMAP(bitmap, X86_PMC_IDX_MAX);
 	struct kvm_pmu *pmu = vcpu_to_pmu(vcpu);
 	struct kvm_pmc *pmc;
+	bool is_pmc_allowed;
 	int i;
 
 	BUILD_BUG_ON(sizeof(pmu->global_ctrl) * BITS_PER_BYTE != X86_PMC_IDX_MAX);
@@ -896,6 +924,12 @@ void kvm_pmu_trigger_event(struct kvm_vcpu *vcpu, u64 eventsel)
 		return;
 
 	kvm_for_each_pmc(pmu, pmc, i, bitmap) {
+		if (is_passthrough)
+			is_pmc_allowed = pmc_speculative_in_use(pmc) &&
+					 check_pmu_event_filter(pmc);
+		else
+			is_pmc_allowed = pmc_event_is_allowed(pmc);
+
 		/*
 		 * Ignore checks for edge detect (all events currently emulated
 		 * but KVM are always rising edges), pin control (unsupported
@@ -911,11 +945,21 @@ void kvm_pmu_trigger_event(struct kvm_vcpu *vcpu, u64 eventsel)
 		 * could ignoring them, so do the simple thing for now.
 		 */
 		if (((pmc->eventsel ^ eventsel) & AMD64_RAW_EVENT_MASK_NB) ||
-		    !pmc_event_is_allowed(pmc) || !cpl_is_matched(pmc))
+		    !is_pmc_allowed || !cpl_is_matched(pmc))
 			continue;
 
-		kvm_pmu_incr_counter(pmc);
+		if (is_passthrough)
+			kvm_passthrough_pmu_incr_counter(vcpu, pmc);
+		else
+			kvm_pmu_incr_counter(pmc);
 	}
+}
+
+void kvm_pmu_trigger_event(struct kvm_vcpu *vcpu, u64 eventsel)
+{
+	bool is_passthrough = is_passthrough_pmu_enabled(vcpu);
+
+	__kvm_pmu_trigger_event(vcpu, eventsel, is_passthrough);
 }
 EXPORT_SYMBOL_GPL(kvm_pmu_trigger_event);
 
