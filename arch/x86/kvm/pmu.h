@@ -45,6 +45,7 @@ struct kvm_pmu_ops {
 	void (*save_pmu_context)(struct kvm_vcpu *vcpu);
 	void (*restore_pmu_context)(struct kvm_vcpu *vcpu);
 	bool (*incr_counter)(struct kvm_pmc *pmc);
+	void (*set_overflow)(struct kvm_vcpu *vcpu);
 
 	const u64 EVENTSEL_EVENT;
 	const int MAX_NR_GP_COUNTERS;
