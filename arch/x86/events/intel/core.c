@@ -6246,6 +6246,7 @@ __init int intel_pmu_init(void)
 
 	/* The perf side of core PMU is ready to support the passthrough vPMU. */
 	x86_get_pmu(smp_processor_id())->capabilities |= PERF_PMU_CAP_PASSTHROUGH_VPMU;
+	x86_pmu.flags |= PMU_FL_PASSTHROUGH;
 
 	/*
 	 * Install the hw-cache-events table:
