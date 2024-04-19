@@ -402,6 +402,21 @@ static atomic_t nr_bpf_events __read_mostly;
 static atomic_t nr_cgroup_events __read_mostly;
 static atomic_t nr_text_poke_events __read_mostly;
 static atomic_t nr_build_id_events __read_mostly;
+static atomic_t nr_include_guest_events __read_mostly;
+
+static refcount_t nr_mediated_pmu_vms = REFCOUNT_INIT(0);
+static DEFINE_MUTEX(perf_mediated_pmu_mutex);
+
+/* !exclude_guest system wide event of PMU with PERF_PMU_CAP_PASSTHROUGH_VPMU */
+static inline bool is_include_guest_event(struct perf_event *event)
+{
+	if ((event->pmu->capabilities & PERF_PMU_CAP_PASSTHROUGH_VPMU) &&
+	    !event->attr.exclude_guest &&
+	    !event->attr.task)
+		return true;
+
+	return false;
+}
 
 static LIST_HEAD(pmus);
 static DEFINE_MUTEX(pmus_lock);
@@ -5193,6 +5208,9 @@ static void _free_event(struct perf_event *event)
 
 	unaccount_event(event);
 
+	if (is_include_guest_event(event))
+		atomic_dec(&nr_include_guest_events);
+
 	security_perf_event_free(event);
 
 	if (event->rb) {
@@ -5736,6 +5754,42 @@ u64 perf_event_pause(struct perf_event *event, bool reset)
 	return count;
 }
 EXPORT_SYMBOL_GPL(perf_event_pause);
+
+/*
+ * Currently invoked at VM creation to
+ * - Check whether there are existing !exclude_guest system wide events
+ *   of PMU with PERF_PMU_CAP_PASSTHROUGH_VPMU
+ * - Set nr_mediated_pmu_vms to prevent !exclude_guest event creation on
+ *   PMUs with PERF_PMU_CAP_PASSTHROUGH_VPMU
+ *
+ * No impact for the PMU without PERF_PMU_CAP_PASSTHROUGH_VPMU. The perf
+ * still owns all the PMU resources.
+ */
+int perf_get_mediated_pmu(void)
+{
+	int ret = 0;
+
+	mutex_lock(&perf_mediated_pmu_mutex);
+	if (refcount_inc_not_zero(&nr_mediated_pmu_vms))
+		goto end;
+
+	if (atomic_read(&nr_include_guest_events)) {
+		ret = -EBUSY;
+		goto end;
+	}
+	refcount_set(&nr_mediated_pmu_vms, 1);
+end:
+	mutex_unlock(&perf_mediated_pmu_mutex);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(perf_get_mediated_pmu);
+
+void perf_put_mediated_pmu(void)
+{
+	if (!refcount_dec_not_one(&nr_mediated_pmu_vms))
+		refcount_set(&nr_mediated_pmu_vms, 0);
+}
+EXPORT_SYMBOL_GPL(perf_put_mediated_pmu);
 
 /*
  * Holding the top-level event's child_mutex means that any
@@ -12086,11 +12140,24 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
 	if (err)
 		goto err_callchain_buffer;
 
+	if (is_include_guest_event(event)) {
+		mutex_lock(&perf_mediated_pmu_mutex);
+		if (refcount_read(&nr_mediated_pmu_vms)) {
+			mutex_unlock(&perf_mediated_pmu_mutex);
+			err = -EACCES;
+			goto err_security_alloc;
+		}
+		atomic_inc(&nr_include_guest_events);
+		mutex_unlock(&perf_mediated_pmu_mutex);
+	}
+
 	/* symmetric to unaccount_event() in _free_event() */
 	account_event(event);
 
 	return event;
 
+err_security_alloc:
+	security_perf_event_free(event);
 err_callchain_buffer:
 	if (!event->parent) {
 		if (event->attr.sample_type & PERF_SAMPLE_CALLCHAIN)
