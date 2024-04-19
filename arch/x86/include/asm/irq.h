@@ -31,6 +31,7 @@ extern void fixup_irqs(void);
 
 #if IS_ENABLED(CONFIG_KVM)
 extern void kvm_set_posted_intr_wakeup_handler(void (*handler)(void));
+void kvm_set_guest_pmi_handler(void (*handler)(void));
 #endif
 
 extern void (*x86_platform_ipi_callback)(void);

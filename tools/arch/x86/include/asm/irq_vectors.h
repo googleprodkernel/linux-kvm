@@ -83,8 +83,9 @@
 /* Vector on which hypervisor callbacks will be delivered */
 #define HYPERVISOR_CALLBACK_VECTOR	0xf3
 
-/* Vector for KVM to deliver posted interrupt IPI */
 #if IS_ENABLED(CONFIG_KVM)
+#define KVM_GUEST_PMI_VECTOR		0xf5
+/* Vector for KVM to deliver posted interrupt IPI */
 #define POSTED_INTR_VECTOR		0xf2
 #define POSTED_INTR_WAKEUP_VECTOR	0xf1
 #define POSTED_INTR_NESTED_VECTOR	0xf0
