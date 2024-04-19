@@ -406,6 +406,7 @@ static atomic_t nr_include_guest_events __read_mostly;
 
 static refcount_t nr_mediated_pmu_vms = REFCOUNT_INIT(0);
 static DEFINE_MUTEX(perf_mediated_pmu_mutex);
+static DEFINE_PER_CPU(bool, perf_in_guest);
 
 /* !exclude_guest system wide event of PMU with PERF_PMU_CAP_PASSTHROUGH_VPMU */
 static inline bool is_include_guest_event(struct perf_event *event)
@@ -3854,6 +3855,15 @@ static int merge_sched_in(struct perf_event *event, void *data)
 	if (!event_filter_match(event))
 		return 0;
 
+	/*
+	 * Don't schedule in any exclude_guest events of PMU with
+	 * PERF_PMU_CAP_PASSTHROUGH_VPMU, while a guest is running.
+	 */
+	if (__this_cpu_read(perf_in_guest) &&
+	    event->pmu->capabilities & PERF_PMU_CAP_PASSTHROUGH_VPMU &&
+	    event->attr.exclude_guest)
+		return 0;
+
 	if (group_can_go_on(event, *can_add_hw)) {
 		if (!group_sched_in(event, ctx))
 			list_add_tail(&event->active_list, get_event_list(event));
@@ -5790,6 +5800,100 @@ void perf_put_mediated_pmu(void)
 		refcount_set(&nr_mediated_pmu_vms, 0);
 }
 EXPORT_SYMBOL_GPL(perf_put_mediated_pmu);
+
+static void perf_sched_out_exclude_guest(struct perf_event_context *ctx)
+{
+	struct perf_event_pmu_context *pmu_ctx;
+
+	update_context_time(ctx);
+	list_for_each_entry(pmu_ctx, &ctx->pmu_ctx_list, pmu_ctx_entry) {
+		struct perf_event *event, *tmp;
+		struct pmu *pmu = pmu_ctx->pmu;
+
+		if (!(pmu->capabilities & PERF_PMU_CAP_PASSTHROUGH_VPMU))
+			continue;
+
+		perf_pmu_disable(pmu);
+
+		/*
+		 * All active events must be exclude_guest events.
+		 * See perf_get_mediated_pmu().
+		 * Unconditionally remove all active events.
+		 */
+		list_for_each_entry_safe(event, tmp, &pmu_ctx->pinned_active, active_list)
+			group_sched_out(event, pmu_ctx->ctx);
+
+		list_for_each_entry_safe(event, tmp, &pmu_ctx->flexible_active, active_list)
+			group_sched_out(event, pmu_ctx->ctx);
+
+		pmu_ctx->rotate_necessary = 0;
+
+		perf_pmu_enable(pmu);
+	}
+}
+
+/* When entering a guest, schedule out all exclude_guest events. */
+void perf_guest_enter(void)
+{
+	struct perf_cpu_context *cpuctx = this_cpu_ptr(&perf_cpu_context);
+
+	lockdep_assert_irqs_disabled();
+
+	perf_ctx_lock(cpuctx, cpuctx->task_ctx);
+
+	if (WARN_ON_ONCE(__this_cpu_read(perf_in_guest))) {
+		perf_ctx_unlock(cpuctx, cpuctx->task_ctx);
+		return;
+	}
+
+	perf_sched_out_exclude_guest(&cpuctx->ctx);
+	if (cpuctx->task_ctx)
+		perf_sched_out_exclude_guest(cpuctx->task_ctx);
+
+	__this_cpu_write(perf_in_guest, true);
+
+	perf_ctx_unlock(cpuctx, cpuctx->task_ctx);
+}
+
+static void perf_sched_in_exclude_guest(struct perf_event_context *ctx)
+{
+	struct perf_event_pmu_context *pmu_ctx;
+
+	update_context_time(ctx);
+	list_for_each_entry(pmu_ctx, &ctx->pmu_ctx_list, pmu_ctx_entry) {
+		struct pmu *pmu = pmu_ctx->pmu;
+
+		if (!(pmu->capabilities & PERF_PMU_CAP_PASSTHROUGH_VPMU))
+			continue;
+
+		perf_pmu_disable(pmu);
+		pmu_groups_sched_in(ctx, &ctx->pinned_groups, pmu);
+		pmu_groups_sched_in(ctx, &ctx->flexible_groups, pmu);
+		perf_pmu_enable(pmu);
+	}
+}
+
+void perf_guest_exit(void)
+{
+	struct perf_cpu_context *cpuctx = this_cpu_ptr(&perf_cpu_context);
+
+	lockdep_assert_irqs_disabled();
+
+	perf_ctx_lock(cpuctx, cpuctx->task_ctx);
+
+	if (WARN_ON_ONCE(!__this_cpu_read(perf_in_guest))) {
+		perf_ctx_unlock(cpuctx, cpuctx->task_ctx);
+		return;
+	}
+
+	__this_cpu_write(perf_in_guest, false);
+
+	perf_sched_in_exclude_guest(&cpuctx->ctx);
+	if (cpuctx->task_ctx)
+		perf_sched_in_exclude_guest(cpuctx->task_ctx);
+
+	perf_ctx_unlock(cpuctx, cpuctx->task_ctx);
+}
 
 /*
  * Holding the top-level event's child_mutex means that any
