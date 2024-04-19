@@ -302,27 +302,22 @@ static void dummy_handler(void) {}
 static void (*kvm_posted_intr_wakeup_handler)(void) = dummy_handler;
 static void (*kvm_guest_pmi_handler)(void) = dummy_handler;
 
-void kvm_set_posted_intr_wakeup_handler(void (*handler)(void))
+void x86_set_kvm_irq_handler(u8 vector, void (*handler)(void))
 {
-	if (handler)
-		kvm_posted_intr_wakeup_handler = handler;
-	else {
-		kvm_posted_intr_wakeup_handler = dummy_handler;
-		synchronize_rcu();
-	}
-}
-EXPORT_SYMBOL_GPL(kvm_set_posted_intr_wakeup_handler);
+	if (!handler)
+		handler = dummy_handler;
 
-void kvm_set_guest_pmi_handler(void (*handler)(void))
-{
-	if (handler) {
+	if (vector == POSTED_INTR_WAKEUP_VECTOR)
+		kvm_posted_intr_wakeup_handler = handler;
+	else if (vector == KVM_GUEST_PMI_VECTOR)
 		kvm_guest_pmi_handler = handler;
-	} else {
-		kvm_guest_pmi_handler = dummy_handler;
+	else
+		WARN_ON_ONCE(1);
+
+	if (handler == dummy_handler)
 		synchronize_rcu();
-	}
 }
-EXPORT_SYMBOL_GPL(kvm_set_guest_pmi_handler);
+EXPORT_SYMBOL_GPL(x86_set_kvm_irq_handler);
 
 /*
  * Handler for POSTED_INTERRUPT_VECTOR.
