@@ -1068,14 +1068,60 @@ void kvm_pmu_passthrough_pmu_msrs(struct kvm_vcpu *vcpu)
 
 void kvm_pmu_save_pmu_context(struct kvm_vcpu *vcpu)
 {
+	struct kvm_pmu *pmu = vcpu_to_pmu(vcpu);
+	struct kvm_pmc *pmc;
+	u32 i;
+
 	lockdep_assert_irqs_disabled();
 
 	static_call_cond(kvm_x86_pmu_save_pmu_context)(vcpu);
+
+	/*
+	 * Clear hardware selector MSR content and its counter to avoid
+	 * leakage and also avoid this guest GP counter get accidentally
+	 * enabled during host running when host enable global ctrl.
+	 */
+	for (i = 0; i < pmu->nr_arch_gp_counters; i++) {
+		pmc = &pmu->gp_counters[i];
+		rdmsrl(pmc->msr_counter, pmc->counter);
+		rdmsrl(pmc->msr_eventsel, pmc->eventsel);
+		if (pmc->counter)
+			wrmsrl(pmc->msr_counter, 0);
+		if (pmc->eventsel)
+			wrmsrl(pmc->msr_eventsel, 0);
+	}
+
+	for (i = 0; i < pmu->nr_arch_fixed_counters; i++) {
+		pmc = &pmu->fixed_counters[i];
+		rdmsrl(pmc->msr_counter, pmc->counter);
+		if (pmc->counter)
+			wrmsrl(pmc->msr_counter, 0);
+	}
 }
 
 void kvm_pmu_restore_pmu_context(struct kvm_vcpu *vcpu)
 {
+	struct kvm_pmu *pmu = vcpu_to_pmu(vcpu);
+	struct kvm_pmc *pmc;
+	int i;
+
 	lockdep_assert_irqs_disabled();
 
 	static_call_cond(kvm_x86_pmu_restore_pmu_context)(vcpu);
+
+	/*
+	 * No need to zero out unexposed GP/fixed counters/selectors since RDPMC
+	 * in this case will be intercepted. Accessing to these counters and
+	 * selectors will cause #GP in the guest.
+	 */
+	for (i = 0; i < pmu->nr_arch_gp_counters; i++) {
+		pmc = &pmu->gp_counters[i];
+		wrmsrl(pmc->msr_counter, pmc->counter);
+		wrmsrl(pmc->msr_eventsel, pmu->gp_counters[i].eventsel);
+	}
+
+	for (i = 0; i < pmu->nr_arch_fixed_counters; i++) {
+		pmc = &pmu->fixed_counters[i];
+		wrmsrl(pmc->msr_counter, pmc->counter);
+	}
 }
