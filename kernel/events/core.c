@@ -5895,6 +5895,11 @@ void perf_guest_exit(void)
 	perf_ctx_unlock(cpuctx, cpuctx->task_ctx);
 }
 
+bool perf_is_guest_context_loaded(void)
+{
+	return __this_cpu_read(perf_in_guest);
+}
+
 /*
  * Holding the top-level event's child_mutex means that any
  * descendant process that has inherited this event will block

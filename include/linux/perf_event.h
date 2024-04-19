@@ -1736,6 +1736,7 @@ extern int perf_get_mediated_pmu(void);
 extern void perf_put_mediated_pmu(void);
 void perf_guest_enter(void);
 void perf_guest_exit(void);
+bool perf_is_guest_context_loaded(void);
 #else /* !CONFIG_PERF_EVENTS: */
 static inline void *
 perf_aux_output_begin(struct perf_output_handle *handle,
@@ -1830,6 +1831,10 @@ static inline int perf_get_mediated_pmu(void)
 static inline void perf_put_mediated_pmu(void)			{ }
 static inline void perf_guest_enter(void)			{ }
 static inline void perf_guest_exit(void)			{ }
+static inline bool perf_is_guest_context_loaded(void)
+{
+	return false;
+}
 #endif
 
 #if defined(CONFIG_PERF_EVENTS) && defined(CONFIG_CPU_SUP_INTEL)

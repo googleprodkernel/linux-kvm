@@ -726,7 +726,7 @@ EXPORT_SYMBOL_GPL(x86_perf_guest_exit);
  * It will not be re-enabled in the NMI handler again, because enabled=0. After
  * handling the NMI, disable_all will be called, which will not change the
  * state either. If PMI hits after disable_all, the PMU is already disabled
- * before entering NMI handler. The NMI handler will not change the state
+ * before entering NMI handler. The NMI handler will no	change the state
  * either.
  *
  * So either situation is harmless.
@@ -1749,6 +1749,23 @@ perf_event_nmi_handler(unsigned int cmd, struct pt_regs *regs)
 	u64 finish_clock;
 	int ret;
 
+	/*
+	 * When guest pmu context is loaded this handler should be forbidden from
+	 * running, the reasons are:
+	 * 1. After x86_perf_guest_enter() is called, and before cpu enter into
+	 *    non-root mode, NMI could happen, but x86_pmu_handle_irq() restore PMU
+	 *    to use NMI vector, which destroy KVM PMI vector setting.
+	 * 2. When VM is running, host NMI other than PMI causes VM exit, KVM will
+	 *    call host NMI handler (vmx_vcpu_enter_exit()) first before KVM save
+	 *    guest PMU context (kvm_pmu_save_pmu_context()), as x86_pmu_handle_irq()
+	 *    clear global_status MSR which has guest status now, then this destroy
+	 *    guest PMU status.
+	 * 3. After VM exit, but before KVM save guest PMU context, host NMI other
+	 *    than PMI could happen, x86_pmu_handle_irq() clear global_status MSR
+	 *    which has guest status now, then this destroy guest PMU status.
+	 */
+	if (perf_is_guest_context_loaded())
+		return 0;
 	/*
 	 * All PMUs/events that share this PMI handler should make sure to
 	 * increment active_events for their events.
