@@ -562,6 +562,19 @@ static void intel_pmu_refresh(struct kvm_vcpu *vcpu)
 				~((1ull << pmu->nr_arch_gp_counters) - 1);
 		}
 	}
+
+	for (i = 0; i < pmu->nr_arch_gp_counters; i++) {
+		pmu->gp_counters[i].msr_eventsel = MSR_P6_EVNTSEL0 + i;
+		if (fw_writes_is_enabled(vcpu))
+			pmu->gp_counters[i].msr_counter = MSR_IA32_PMC0 + i;
+		else
+			pmu->gp_counters[i].msr_counter = MSR_IA32_PERFCTR0 + i;
+	}
+
+	for (i = 0; i < pmu->nr_arch_fixed_counters; i++) {
+		pmu->fixed_counters[i].msr_eventsel = MSR_CORE_PERF_FIXED_CTR_CTRL;
+		pmu->fixed_counters[i].msr_counter = MSR_CORE_PERF_FIXED_CTR0 + i;
+	}
 }
 
 static void intel_pmu_init(struct kvm_vcpu *vcpu)
