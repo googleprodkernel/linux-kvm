@@ -725,6 +725,21 @@ void intel_pmu_cross_mapped_check(struct kvm_pmu *pmu)
 	}
 }
 
+static bool intel_is_rdpmc_passthru_allowed(struct kvm_vcpu *vcpu)
+{
+	/*
+	 * Per Intel SDM vol. 2 for RDPMC, MSR_PERF_METRICS is accessible by
+	 * with type 0x2000 in ECX[31:16], while the index value in ECX[15:0] is
+	 * implementation specific. Therefore, if the host has this MSR, but
+	 * does not expose it to the guest, RDPMC has to be intercepted.
+	 */
+	if ((host_perf_cap & PMU_CAP_PERF_METRICS) &&
+	    !(vcpu_get_perf_capabilities(vcpu) & PMU_CAP_PERF_METRICS))
+		return false;
+
+	return true;
+}
+
 struct kvm_pmu_ops intel_pmu_ops __initdata = {
 	.rdpmc_ecx_to_pmc = intel_rdpmc_ecx_to_pmc,
 	.msr_idx_to_pmc = intel_msr_idx_to_pmc,
@@ -736,6 +751,7 @@ struct kvm_pmu_ops intel_pmu_ops __initdata = {
 	.reset = intel_pmu_reset,
 	.deliver_pmi = intel_pmu_deliver_pmi,
 	.cleanup = intel_pmu_cleanup,
+	.is_rdpmc_passthru_allowed = intel_is_rdpmc_passthru_allowed,
 	.EVENTSEL_EVENT = ARCH_PERFMON_EVENTSEL_EVENT,
 	.MAX_NR_GP_COUNTERS = KVM_INTEL_PMC_MAX_GENERIC,
 	.MIN_NR_GP_COUNTERS = 1,

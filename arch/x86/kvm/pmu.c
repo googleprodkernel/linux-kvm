@@ -102,6 +102,7 @@ bool kvm_pmu_check_rdpmc_passthrough(struct kvm_vcpu *vcpu)
 
 	if (is_passthrough_pmu_enabled(vcpu) &&
 	    !enable_vmware_backdoor &&
+	    static_call(kvm_x86_pmu_is_rdpmc_passthru_allowed)(vcpu) &&
 	    pmu->nr_arch_gp_counters == kvm_pmu_cap.num_counters_gp &&
 	    pmu->nr_arch_fixed_counters == kvm_pmu_cap.num_counters_fixed &&
 	    pmu->counter_bitmask[KVM_PMC_GP] == (((u64)1 << kvm_pmu_cap.bit_width_gp) - 1) &&
