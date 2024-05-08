@@ -1,13 +1,24 @@
-Address Space Isolation
+Address Space Isolation, for LSF/MM/BPF 2024
 ============
 
-This is a working branch for the latest upstream version of ASI.
+This is a demo branch for the latest upstream version of ASI.
 
-Commits in here have lots of garbage in the commit message that needs to be
-cleaned out.
+This represents a pretty minimal version of ASI, it importantly lacks
+local-nonsensitive support and and any attempt to mitigate cross-SMT attacks, it
+also only sandboxes KVM guests (not bare-metal userspace).
 
-This is a version of ASI with out local-nonsensitive, and without any attempt to
-mitigate cross-SMT attacks.
+The branch itself is also a bit messy:
+
+- Some code might look weird because it was taken from Google's internal branch
+  where "easily-rebasable diff from upstream" is a goal. We'll need to look over
+  the patches with this in mind before posting a PATCH (I guess it's not a big
+  deal for an RFC).
+
+- The commit history is messy and will contain redundant changes and reversions,
+  plus commit messages are likely to miss important explanatory content.
+
+Nonetheless it should be enough to illustrate how ASI works and lots of what you
+can expect to see in future LKML posts.
 
 TODO:
 
