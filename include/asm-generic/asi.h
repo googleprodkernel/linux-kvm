@@ -77,6 +77,10 @@ void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len) { }
 
 static inline void asi_check_boottime_disable(void) { }
 
+static inline void asi_clone_user_pgtbl(struct mm_struct *mm, pgd_t *pgdp) { };
+
+static inline bool asi_maps_user_addr(void) { return false; }
+
 #endif  /* !_ASSEMBLY_ */
 
 #endif /* !CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */

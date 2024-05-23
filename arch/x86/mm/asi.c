@@ -12,6 +12,7 @@
 #include <asm/pgalloc.h>
 #include <asm/mmu_context.h>
 #include <asm/traps.h>
+#include <asm/pgtable.h>
 
 #include "mm_internal.h"
 #include "../../../mm/internal.h"
@@ -319,6 +320,34 @@ static void __asi_destroy(struct asi *asi)
 	memset(asi, 0, sizeof(struct asi));
 }
 
+static void __asi_init_user_pgds(struct mm_struct *mm, struct asi *asi)
+{
+	int i;
+
+	if (!asi_maps_user_addr())
+		return;
+
+	/*
+	 * The code below must be executed only after the given asi is
+	 * available in mm->asi[index] to ensure at least either this
+	 * function or __asi_clone_user_pgd() will copy entries in the
+	 * unrestricted pgd to the restricted pgd.
+	 */
+	if (WARN_ON_ONCE(&mm->asi[asi->index] != asi))
+		return;
+
+	/*
+	 * See the comment for __asi_clone_user_pgd() why we hold the lock here.
+	 */
+	spin_lock(&asi->pgd_lock);
+
+	for (i = 0; i < KERNEL_PGD_BOUNDARY; i++)
+		set_pgd(asi->pgd + i, READ_ONCE(*(mm->pgd + i)));
+
+	spin_unlock(&asi->pgd_lock);
+}
+
+
 int asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi)
 {
 	struct asi *asi;
@@ -358,6 +387,7 @@ int asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi)
 	asi->class = &asi_class[asi_index];
 	asi->mm = mm;
 	asi->index = asi_index;
+	spin_lock_init(&asi->pgd_lock);
 
 	for (i = KERNEL_PGD_BOUNDARY; i < PTRS_PER_PGD; i++)
 		set_pgd(asi->pgd + i, asi_global_nonsensitive_pgd[i]);
@@ -368,6 +398,7 @@ exit_unlock:
 	else
 		*out_asi = asi;
 
+	__asi_init_user_pgds(mm, asi);
 	mutex_unlock(&mm->asi_init_lock);
 
 	return err;
@@ -746,3 +777,66 @@ void asi_unmap(struct asi *asi, void *addr, size_t len)
 
 	asi_flush_tlb_range(asi, addr, len);
 }
+
+/*
+ * This function is to copy the given unrestricted pgd entry for
+ * userspace addresses to the corresponding restricted pgd entries.
+ * It means that the unrestricted pgd entry must be updated before
+ * this function is called.
+ * We map entire userspace addresses to the restricted address spaces
+ * by copying unrestricted pgd entries to the restricted page tables
+ * so that we don't need to maintain consistency of lower level PTEs
+ * between the unrestricted page table and the restricted page tables.
+ */
+void asi_clone_user_pgtbl(struct mm_struct *mm, pgd_t *pgdp)
+{
+	unsigned long pgd_idx;
+	struct asi *asi;
+	int i;
+
+	if (!static_asi_enabled() || !asi_maps_user_addr())
+		return;
+
+	/* We shouldn't need to take care non-userspace mapping. */
+	if (!pgdp_maps_userspace(pgdp))
+		return;
+
+	/*
+	 * The mm will be NULL for p{4,g}d_clear(). We need to get
+	 * the owner mm for this pgd in this case. The pgd page has
+	 * a valid pt_mm only when SHARED_KERNEL_PMD == 0.
+	 */
+	BUILD_BUG_ON(SHARED_KERNEL_PMD);
+	if (!mm) {
+		mm = pgd_page_get_mm(virt_to_page(pgdp));
+		if (WARN_ON_ONCE(!mm))
+			return;
+	}
+
+	/*
+	 * Compute a PGD index of the given pgd entry. This will be the
+	 * index of the ASI PGD entry to be updated.
+	 */
+	pgd_idx = pgdp - PTR_ALIGN_DOWN(pgdp, PAGE_SIZE);
+
+	for (i = 0; i < ARRAY_SIZE(mm->asi); i++) {
+		asi = mm->asi + i;
+
+		if (WARN_ON_ONCE(!asi_pgd(asi)))
+			continue;
+
+		/*
+		 * We need to synchronize concurrent callers of
+		 * __asi_clone_user_pgd() among themselves, as well as
+		 * __asi_init_user_pgds(). The lock makes sure that reading
+		 * the unrestricted pgd and updating the corresponding
+		 * ASI pgd are not interleaved by concurrent calls.
+		 * We cannot rely on mm->page_table_lock here because it
+		 * is not always held when pgd/p4d_clear_bad() is called.
+		 */
+		spin_lock(&asi->pgd_lock);
+		set_pgd(asi_pgd(asi) + pgd_idx, READ_ONCE(*pgdp));
+		spin_unlock(&asi->pgd_lock);
+	}
+}
+

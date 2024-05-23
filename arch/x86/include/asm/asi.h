@@ -112,6 +112,7 @@ struct asi {
 	struct mm_struct *mm;
 	int64_t ref_count;
 	u16 index;
+	spinlock_t pgd_lock;
 };
 
 DECLARE_PER_CPU_ALIGNED(struct asi *, curr_asi);
@@ -125,6 +126,7 @@ void asi_unregister_class(int index);
 
 int  asi_init(struct mm_struct *mm, int asi_index, struct asi **out_asi);
 void asi_destroy(struct asi *asi);
+void asi_clone_user_pgtbl(struct mm_struct *mm, pgd_t *pgdp);
 
 /* Enter an ASI domain (restricted address space) and begin the critical section. */
 void asi_enter(struct asi *asi);
@@ -261,6 +263,23 @@ static __always_inline bool asi_in_critical_section(void)
 
 #define INIT_MM_ASI(init_mm) \
 	.asi_init_lock = __MUTEX_INITIALIZER(init_mm.asi_init_lock),
+
+/*
+ * This function returns true when we would like to map userspace addresses
+ * in the restricted address space for better performance.
+ * We would like to map userspace addresses only when SMAP is used on the
+ * system and the CPUs are not vulnerable to L1TF for now.
+ * When SMAP is enabled, the guest should not be able to exploit CPU
+ * mispredictions due to mistraining to speculatively fetch data from
+ * the host kernel during transient execution.
+ * But, even architecturally-accessed data will be problematic on a CPU
+ * that is vulnerable to L1TF, unless we have mitigation for it.
+ */
+static inline bool asi_maps_user_addr(void)
+{
+	return cpu_feature_enabled(X86_FEATURE_SMAP) &&
+	       !static_cpu_has_bug(X86_BUG_L1TF);
+}
 
 #endif /* CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION */
 
