@@ -2673,6 +2673,15 @@ static bool x86_pmu_filter(struct pmu *pmu, int cpu)
 	return ret;
 }
 
+static void x86_pmu_switch_interrupt(bool enter, u32 guest_lvtpc)
+{
+	if (enter)
+		apic_write(APIC_LVTPC, APIC_DM_FIXED | KVM_GUEST_PMI_VECTOR |
+			   (guest_lvtpc & APIC_LVT_MASKED));
+	else
+		apic_write(APIC_LVTPC, APIC_DM_NMI);
+}
+
 static struct pmu pmu = {
 	.pmu_enable		= x86_pmu_enable,
 	.pmu_disable		= x86_pmu_disable,
@@ -2702,6 +2711,8 @@ static struct pmu pmu = {
 	.aux_output_match	= x86_pmu_aux_output_match,
 
 	.filter			= x86_pmu_filter,
+
+	.switch_interrupt	= x86_pmu_switch_interrupt,
 };
 
 void arch_perf_update_userpage(struct perf_event *event,
