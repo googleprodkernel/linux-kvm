@@ -196,6 +196,7 @@ extern struct kvm_pmu_emulated_event_selectors kvm_pmu_eventsel;
 static inline void kvm_init_pmu_capability(const struct kvm_pmu_ops *pmu_ops)
 {
 	bool is_intel = boot_cpu_data.x86_vendor == X86_VENDOR_INTEL;
+	bool is_amd = boot_cpu_data.x86_vendor == X86_VENDOR_AMD;
 	int min_nr_gp_ctrs = pmu_ops->MIN_NR_GP_COUNTERS;
 
 	/*
@@ -223,18 +224,23 @@ static inline void kvm_init_pmu_capability(const struct kvm_pmu_ops *pmu_ops)
 			enable_pmu = false;
 	}
 
-	/* Pass-through vPMU is only supported in Intel CPUs. */
-	if (!is_intel)
+	/* Pass-through vPMU is only supported in Intel and AMD CPUs. */
+	if (!is_intel && !is_amd)
 		enable_passthrough_pmu = false;
 
 	/*
-	 * Pass-through vPMU requires at least PerfMon version 4 because the
-	 * implementation requires the usage of MSR_CORE_PERF_GLOBAL_STATUS_SET
-	 * for counter emulation as well as PMU context switch.  In addition, it
-	 * requires host PMU support on passthrough mode. Disable pass-through
-	 * vPMU if any condition fails.
+	 * On Intel platforms, pass-through vPMU requires at least PerfMon
+	 * version 4 because the implementation requires the usage of
+	 * MSR_CORE_PERF_GLOBAL_STATUS_SET for counter emulation as well as
+	 * PMU context switch.  In addition, it requires host PMU support on
+	 * passthrough mode. Disable pass-through vPMU if any condition fails.
+	 *
+	 * On AMD platforms, pass-through vPMU requires at least PerfMonV2
+	 * because MSR_PERF_CNTR_GLOBAL_STATUS_SET is required.
 	 */
-	if (!enable_pmu || kvm_pmu_cap.version < 4 || !kvm_pmu_cap.passthrough)
+	if (!enable_pmu || !kvm_pmu_cap.passthrough ||
+	    (is_intel && kvm_pmu_cap.version < 4) ||
+	    (is_amd && kvm_pmu_cap.version < 2))
 		enable_passthrough_pmu = false;
 
 	if (!enable_pmu) {
