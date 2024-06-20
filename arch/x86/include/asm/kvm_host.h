@@ -522,6 +522,7 @@ struct kvm_pmc {
 	 */
 	u64 emulated_counter;
 	u64 eventsel;
+	u64 eventsel_hw;
 	u64 msr_counter;
 	u64 msr_eventsel;
 	struct perf_event *perf_event;
