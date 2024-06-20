@@ -376,7 +376,8 @@ enum event_type_t {
 	/* see ctx_resched() for details */
 	EVENT_CPU = 0x8,
 	EVENT_CGROUP = 0x10,
-	EVENT_FLAGS = EVENT_CGROUP,
+	EVENT_GUEST = 0x20,
+	EVENT_FLAGS = EVENT_CGROUP | EVENT_GUEST,
 	EVENT_ALL = EVENT_FLEXIBLE | EVENT_PINNED,
 };
 
@@ -407,6 +408,7 @@ static atomic_t nr_include_guest_events __read_mostly;
 
 static atomic_t nr_mediated_pmu_vms;
 static DEFINE_MUTEX(perf_mediated_pmu_mutex);
+static DEFINE_PER_CPU(bool, perf_in_guest);
 
 /* !exclude_guest event of PMU with PERF_PMU_CAP_PASSTHROUGH_VPMU */
 static inline bool is_include_guest_event(struct perf_event *event)
@@ -706,6 +708,10 @@ static bool perf_skip_pmu_ctx(struct perf_event_pmu_context *pmu_ctx,
 	if ((event_type & EVENT_CGROUP) && !pmu_ctx->nr_cgroups)
 		return true;
 
+	if ((event_type & EVENT_GUEST) &&
+	    !(pmu_ctx->pmu->capabilities & PERF_PMU_CAP_PASSTHROUGH_VPMU))
+		return true;
+
 	return false;
 }
 
@@ -770,12 +776,21 @@ static inline int is_cgroup_event(struct perf_event *event)
 	return event->cgrp != NULL;
 }
 
+static inline u64 __perf_event_time_ctx(struct perf_event *event,
+					struct perf_time_ctx *time,
+					struct perf_time_ctx *timeguest);
+
+static inline u64 __perf_event_time_ctx_now(struct perf_event *event,
+					    struct perf_time_ctx *time,
+					    struct perf_time_ctx *timeguest,
+					    u64 now);
+
 static inline u64 perf_cgroup_event_time(struct perf_event *event)
 {
 	struct perf_cgroup_info *t;
 
 	t = per_cpu_ptr(event->cgrp->info, event->cpu);
-	return t->time.time;
+	return __perf_event_time_ctx(event, &t->time, &t->timeguest);
 }
 
 static inline u64 perf_cgroup_event_time_now(struct perf_event *event, u64 now)
@@ -784,9 +799,9 @@ static inline u64 perf_cgroup_event_time_now(struct perf_event *event, u64 now)
 
 	t = per_cpu_ptr(event->cgrp->info, event->cpu);
 	if (!__load_acquire(&t->active))
-		return t->time.time;
-	now += READ_ONCE(t->time.offset);
-	return now;
+		return __perf_event_time_ctx(event, &t->time, &t->timeguest);
+
+	return __perf_event_time_ctx_now(event, &t->time, &t->timeguest, now);
 }
 
 static inline void update_perf_time_ctx(struct perf_time_ctx *time, u64 now, bool adv);
@@ -794,6 +809,18 @@ static inline void update_perf_time_ctx(struct perf_time_ctx *time, u64 now, boo
 static inline void __update_cgrp_time(struct perf_cgroup_info *info, u64 now, bool adv)
 {
 	update_perf_time_ctx(&info->time, now, adv);
+}
+
+static inline void __update_cgrp_guest_time(struct perf_cgroup_info *info, u64 now, bool adv)
+{
+	update_perf_time_ctx(&info->timeguest, now, adv);
+}
+
+static inline void update_cgrp_time(struct perf_cgroup_info *info, u64 now)
+{
+	__update_cgrp_time(info, now, true);
+	if (__this_cpu_read(perf_in_guest))
+		__update_cgrp_guest_time(info, now, true);
 }
 
 static inline void update_cgrp_time_from_cpuctx(struct perf_cpu_context *cpuctx, bool final)
@@ -809,7 +836,7 @@ static inline void update_cgrp_time_from_cpuctx(struct perf_cpu_context *cpuctx,
 			cgrp = container_of(css, struct perf_cgroup, css);
 			info = this_cpu_ptr(cgrp->info);
 
-			__update_cgrp_time(info, now, true);
+			update_cgrp_time(info, now);
 			if (final)
 				__store_release(&info->active, 0);
 		}
@@ -832,11 +859,11 @@ static inline void update_cgrp_time_from_event(struct perf_event *event)
 	 * Do not update time when cgroup is not active
 	 */
 	if (info->active)
-		__update_cgrp_time(info, perf_clock(), true);
+		update_cgrp_time(info, perf_clock());
 }
 
 static inline void
-perf_cgroup_set_timestamp(struct perf_cpu_context *cpuctx)
+perf_cgroup_set_timestamp(struct perf_cpu_context *cpuctx, bool guest)
 {
 	struct perf_event_context *ctx = &cpuctx->ctx;
 	struct perf_cgroup *cgrp = cpuctx->cgrp;
@@ -856,8 +883,12 @@ perf_cgroup_set_timestamp(struct perf_cpu_context *cpuctx)
 	for (css = &cgrp->css; css; css = css->parent) {
 		cgrp = container_of(css, struct perf_cgroup, css);
 		info = this_cpu_ptr(cgrp->info);
-		__update_cgrp_time(info, ctx->time.stamp, false);
-		__store_release(&info->active, 1);
+		if (guest) {
+			__update_cgrp_guest_time(info, ctx->time.stamp, false);
+		} else {
+			__update_cgrp_time(info, ctx->time.stamp, false);
+			__store_release(&info->active, 1);
+		}
 	}
 }
 
@@ -1061,7 +1092,7 @@ static inline int perf_cgroup_connect(pid_t pid, struct perf_event *event,
 }
 
 static inline void
-perf_cgroup_set_timestamp(struct perf_cpu_context *cpuctx)
+perf_cgroup_set_timestamp(struct perf_cpu_context *cpuctx, bool guest)
 {
 }
 
@@ -1488,16 +1519,34 @@ static inline void update_perf_time_ctx(struct perf_time_ctx *time, u64 now, boo
  */
 static void __update_context_time(struct perf_event_context *ctx, bool adv)
 {
-	u64 now = perf_clock();
-
 	lockdep_assert_held(&ctx->lock);
 
-	update_perf_time_ctx(&ctx->time, now, adv);
+	update_perf_time_ctx(&ctx->time, perf_clock(), adv);
+}
+
+static void __update_context_guest_time(struct perf_event_context *ctx, bool adv)
+{
+	lockdep_assert_held(&ctx->lock);
+
+	/* must be called after __update_context_time(); */
+	update_perf_time_ctx(&ctx->timeguest, ctx->time.stamp, adv);
 }
 
 static void update_context_time(struct perf_event_context *ctx)
 {
 	__update_context_time(ctx, true);
+	if (__this_cpu_read(perf_in_guest))
+		__update_context_guest_time(ctx, true);
+}
+
+static inline u64 __perf_event_time_ctx(struct perf_event *event,
+					struct perf_time_ctx *time,
+					struct perf_time_ctx *timeguest)
+{
+	if (event->attr.exclude_guest)
+		return time->time - timeguest->time;
+	else
+		return time->time;
 }
 
 static u64 perf_event_time(struct perf_event *event)
@@ -1510,7 +1559,26 @@ static u64 perf_event_time(struct perf_event *event)
 	if (is_cgroup_event(event))
 		return perf_cgroup_event_time(event);
 
-	return ctx->time.time;
+	return __perf_event_time_ctx(event, &ctx->time, &ctx->timeguest);
+}
+
+static inline u64 __perf_event_time_ctx_now(struct perf_event *event,
+					    struct perf_time_ctx *time,
+					    struct perf_time_ctx *timeguest,
+					    u64 now)
+{
+	/*
+	 * The exclude_guest event time should be calculated from
+	 * the ctx time -  the guest time.
+	 * The ctx time is now + READ_ONCE(time->offset).
+	 * The guest time is now + READ_ONCE(timeguest->offset).
+	 * So the exclude_guest time is
+	 * READ_ONCE(time->offset) - READ_ONCE(timeguest->offset).
+	 */
+	if (event->attr.exclude_guest && __this_cpu_read(perf_in_guest))
+		return READ_ONCE(time->offset) - READ_ONCE(timeguest->offset);
+	else
+		return now + READ_ONCE(time->offset);
 }
 
 static u64 perf_event_time_now(struct perf_event *event, u64 now)
@@ -1524,10 +1592,9 @@ static u64 perf_event_time_now(struct perf_event *event, u64 now)
 		return perf_cgroup_event_time_now(event, now);
 
 	if (!(__load_acquire(&ctx->is_active) & EVENT_TIME))
-		return ctx->time.time;
+		return __perf_event_time_ctx(event, &ctx->time, &ctx->timeguest);
 
-	now += READ_ONCE(ctx->time.offset);
-	return now;
+	return __perf_event_time_ctx_now(event, &ctx->time, &ctx->timeguest, now);
 }
 
 static enum event_type_t get_event_type(struct perf_event *event)
@@ -3334,9 +3401,15 @@ ctx_sched_out(struct perf_event_context *ctx, enum event_type_t event_type)
 	 * would only update time for the pinned events.
 	 */
 	if (is_active & EVENT_TIME) {
+		bool stop;
+
+		/* vPMU should not stop time */
+		stop = !(event_type & EVENT_GUEST) &&
+		       ctx == &cpuctx->ctx;
+
 		/* update (and stop) ctx time */
 		update_context_time(ctx);
-		update_cgrp_time_from_cpuctx(cpuctx, ctx == &cpuctx->ctx);
+		update_cgrp_time_from_cpuctx(cpuctx, stop);
 		/*
 		 * CPU-release for the below ->is_active store,
 		 * see __load_acquire() in perf_event_time_now()
@@ -3354,7 +3427,18 @@ ctx_sched_out(struct perf_event_context *ctx, enum event_type_t event_type)
 			cpuctx->task_ctx = NULL;
 	}
 
-	is_active ^= ctx->is_active; /* changed bits */
+	if (event_type & EVENT_GUEST) {
+		/*
+		 * Schedule out all !exclude_guest events of PMU
+		 * with PERF_PMU_CAP_PASSTHROUGH_VPMU.
+		 */
+		is_active = EVENT_ALL;
+		__update_context_guest_time(ctx, false);
+		perf_cgroup_set_timestamp(cpuctx, true);
+		barrier();
+	} else {
+		is_active ^= ctx->is_active; /* changed bits */
+	}
 
 	list_for_each_entry(pmu_ctx, &ctx->pmu_ctx_list, pmu_ctx_entry) {
 		if (perf_skip_pmu_ctx(pmu_ctx, event_type))
@@ -3853,10 +3937,15 @@ static inline void group_update_userpage(struct perf_event *group_event)
 		event_update_userpage(event);
 }
 
+struct merge_sched_data {
+	int can_add_hw;
+	enum event_type_t event_type;
+};
+
 static int merge_sched_in(struct perf_event *event, void *data)
 {
 	struct perf_event_context *ctx = event->ctx;
-	int *can_add_hw = data;
+	struct merge_sched_data *msd = data;
 
 	if (event->state <= PERF_EVENT_STATE_OFF)
 		return 0;
@@ -3864,13 +3953,22 @@ static int merge_sched_in(struct perf_event *event, void *data)
 	if (!event_filter_match(event))
 		return 0;
 
-	if (group_can_go_on(event, *can_add_hw)) {
+	/*
+	 * Don't schedule in any exclude_guest events of PMU with
+	 * PERF_PMU_CAP_PASSTHROUGH_VPMU, while a guest is running.
+	 */
+	if (__this_cpu_read(perf_in_guest) && event->attr.exclude_guest &&
+	    event->pmu->capabilities & PERF_PMU_CAP_PASSTHROUGH_VPMU &&
+	    !(msd->event_type & EVENT_GUEST))
+		return 0;
+
+	if (group_can_go_on(event, msd->can_add_hw)) {
 		if (!group_sched_in(event, ctx))
 			list_add_tail(&event->active_list, get_event_list(event));
 	}
 
 	if (event->state == PERF_EVENT_STATE_INACTIVE) {
-		*can_add_hw = 0;
+		msd->can_add_hw = 0;
 		if (event->attr.pinned) {
 			perf_cgroup_event_disable(event, ctx);
 			perf_event_set_state(event, PERF_EVENT_STATE_ERROR);
@@ -3889,11 +3987,15 @@ static int merge_sched_in(struct perf_event *event, void *data)
 
 static void pmu_groups_sched_in(struct perf_event_context *ctx,
 				struct perf_event_groups *groups,
-				struct pmu *pmu)
+				struct pmu *pmu,
+				enum event_type_t event_type)
 {
-	int can_add_hw = 1;
+	struct merge_sched_data msd = {
+		.can_add_hw = 1,
+		.event_type = event_type,
+	};
 	visit_groups_merge(ctx, groups, smp_processor_id(), pmu,
-			   merge_sched_in, &can_add_hw);
+			   merge_sched_in, &msd);
 }
 
 static void ctx_groups_sched_in(struct perf_event_context *ctx,
@@ -3905,14 +4007,14 @@ static void ctx_groups_sched_in(struct perf_event_context *ctx,
 	list_for_each_entry(pmu_ctx, &ctx->pmu_ctx_list, pmu_ctx_entry) {
 		if (perf_skip_pmu_ctx(pmu_ctx, event_type))
 			continue;
-		pmu_groups_sched_in(ctx, groups, pmu_ctx->pmu);
+		pmu_groups_sched_in(ctx, groups, pmu_ctx->pmu, event_type);
 	}
 }
 
 static void __pmu_ctx_sched_in(struct perf_event_context *ctx,
 			       struct pmu *pmu)
 {
-	pmu_groups_sched_in(ctx, &ctx->flexible_groups, pmu);
+	pmu_groups_sched_in(ctx, &ctx->flexible_groups, pmu, 0);
 }
 
 static void
@@ -3927,9 +4029,11 @@ ctx_sched_in(struct perf_event_context *ctx, enum event_type_t event_type)
 		return;
 
 	if (!(is_active & EVENT_TIME)) {
+		/* EVENT_TIME should be active while the guest runs */
+		WARN_ON_ONCE(event_type & EVENT_GUEST);
 		/* start ctx time */
 		__update_context_time(ctx, false);
-		perf_cgroup_set_timestamp(cpuctx);
+		perf_cgroup_set_timestamp(cpuctx, false);
 		/*
 		 * CPU-release for the below ->is_active store,
 		 * see __load_acquire() in perf_event_time_now()
@@ -3945,7 +4049,23 @@ ctx_sched_in(struct perf_event_context *ctx, enum event_type_t event_type)
 			WARN_ON_ONCE(cpuctx->task_ctx != ctx);
 	}
 
-	is_active ^= ctx->is_active; /* changed bits */
+	if (event_type & EVENT_GUEST) {
+		/*
+		 * Schedule in all !exclude_guest events of PMU
+		 * with PERF_PMU_CAP_PASSTHROUGH_VPMU.
+		 */
+		is_active = EVENT_ALL;
+
+		/*
+		 * Update ctx time to set the new start time for
+		 * the exclude_guest events.
+		 */
+		update_context_time(ctx);
+		update_cgrp_time_from_cpuctx(cpuctx, false);
+		barrier();
+	} else {
+		is_active ^= ctx->is_active; /* changed bits */
+	}
 
 	/*
 	 * First go through the list and put on any pinned groups
