@@ -422,6 +422,7 @@ static inline bool is_include_guest_event(struct perf_event *event)
 
 static LIST_HEAD(pmus);
 static DEFINE_MUTEX(pmus_lock);
+static struct pmu *passthru_pmu;
 static struct srcu_struct pmus_srcu;
 static cpumask_var_t perf_online_mask;
 static struct kmem_cache *perf_event_cache;
@@ -5941,8 +5942,21 @@ void perf_put_mediated_pmu(void)
 }
 EXPORT_SYMBOL_GPL(perf_put_mediated_pmu);
 
+static void perf_switch_interrupt(bool enter, u32 guest_lvtpc)
+{
+	/* Mediated passthrough PMU should have PASSTHROUGH_VPMU cap. */
+	if (!passthru_pmu)
+		return;
+
+	if (passthru_pmu->switch_interrupt &&
+	    try_module_get(passthru_pmu->module)) {
+		passthru_pmu->switch_interrupt(enter, guest_lvtpc);
+		module_put(passthru_pmu->module);
+	}
+}
+
 /* When entering a guest, schedule out all exclude_guest events. */
-void perf_guest_enter(void)
+void perf_guest_enter(u32 guest_lvtpc)
 {
 	struct perf_cpu_context *cpuctx = this_cpu_ptr(&perf_cpu_context);
 
@@ -5962,6 +5976,8 @@ void perf_guest_enter(void)
 		perf_ctx_enable(cpuctx->task_ctx, EVENT_GUEST);
 	}
 
+	perf_switch_interrupt(true, guest_lvtpc);
+
 	__this_cpu_write(perf_in_guest, true);
 
 unlock:
@@ -5979,6 +5995,8 @@ void perf_guest_exit(void)
 
 	if (WARN_ON_ONCE(!__this_cpu_read(perf_in_guest)))
 		goto unlock;
+
+	perf_switch_interrupt(false, 0);
 
 	perf_ctx_disable(&cpuctx->ctx, EVENT_GUEST);
 	ctx_sched_in(&cpuctx->ctx, EVENT_GUEST);
@@ -11842,7 +11860,21 @@ int perf_pmu_register(struct pmu *pmu, const char *name, int type)
 	if (!pmu->event_idx)
 		pmu->event_idx = perf_event_idx_default;
 
-	list_add_rcu(&pmu->entry, &pmus);
+	/*
+	 * Initialize passthru_pmu with the core pmu that has
+	 * PERF_PMU_CAP_PASSTHROUGH_VPMU capability.
+	 */
+	if (pmu->capabilities & PERF_PMU_CAP_PASSTHROUGH_VPMU) {
+		if (!passthru_pmu)
+		    passthru_pmu = pmu;
+
+		if (WARN_ONCE(passthru_pmu != pmu, "Only one passthrough PMU is supported\n")) {
+			ret = -EINVAL;
+			goto free_dev;
+		}
+	}
+
+	list_add_tail_rcu(&pmu->entry, &pmus);
 	atomic_set(&pmu->exclusive_cnt, 0);
 	ret = 0;
 unlock:

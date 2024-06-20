@@ -541,6 +541,11 @@ struct pmu {
 	 * Check period value for PERF_EVENT_IOC_PERIOD ioctl.
 	 */
 	int (*check_period)		(struct perf_event *event, u64 value); /* optional */
+
+	/*
+	 * Switch the interrupt vectors, e.g., guest enter/exit.
+	 */
+	void (*switch_interrupt)	(bool enter, u32 guest_lvtpc); /* optional */
 };
 
 enum perf_addr_filter_action_t {
@@ -1738,7 +1743,7 @@ extern int perf_event_period(struct perf_event *event, u64 value);
 extern u64 perf_event_pause(struct perf_event *event, bool reset);
 int perf_get_mediated_pmu(void);
 void perf_put_mediated_pmu(void);
-void perf_guest_enter(void);
+void perf_guest_enter(u32 guest_lvtpc);
 void perf_guest_exit(void);
 #else /* !CONFIG_PERF_EVENTS: */
 static inline void *
@@ -1833,7 +1838,7 @@ static inline int perf_get_mediated_pmu(void)
 }
 
 static inline void perf_put_mediated_pmu(void)			{ }
-static inline void perf_guest_enter(void)			{ }
+static inline void perf_guest_enter(u32 guest_lvtpc)		{ }
 static inline void perf_guest_exit(void)			{ }
 #endif
 
