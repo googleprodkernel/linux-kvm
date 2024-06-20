@@ -1097,6 +1097,8 @@ void kvm_pmu_save_pmu_context(struct kvm_vcpu *vcpu)
 		if (pmc->counter)
 			wrmsrl(pmc->msr_counter, 0);
 	}
+
+	perf_guest_exit();
 }
 
 void kvm_pmu_restore_pmu_context(struct kvm_vcpu *vcpu)
@@ -1106,6 +1108,8 @@ void kvm_pmu_restore_pmu_context(struct kvm_vcpu *vcpu)
 	int i;
 
 	lockdep_assert_irqs_disabled();
+
+	perf_guest_enter(kvm_lapic_get_reg(vcpu->arch.apic, APIC_LVTPC));
 
 	static_call_cond(kvm_x86_pmu_restore_pmu_context)(vcpu);
 
