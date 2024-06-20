@@ -740,6 +740,52 @@ static bool intel_is_rdpmc_passthru_allowed(struct kvm_vcpu *vcpu)
 	return true;
 }
 
+/*
+ * Setup PMU MSR interception for both mediated passthrough vPMU and legacy
+ * emulated vPMU. Note that this function is called after each time userspace
+ * set CPUID.
+ */
+static void intel_passthrough_pmu_msrs(struct kvm_vcpu *vcpu)
+{
+	bool msr_intercept = !is_passthrough_pmu_enabled(vcpu);
+	struct kvm_pmu *pmu = vcpu_to_pmu(vcpu);
+	int i;
+
+	/*
+	 * Unexposed PMU MSRs are intercepted by default. However,
+	 * KVM_SET_CPUID{,2} may be invoked multiple times. To ensure MSR
+	 * interception is correct after each call of setting CPUID, explicitly
+	 * touch msr bitmap for each PMU MSR.
+	 */
+	for (i = 0; i < kvm_pmu_cap.num_counters_gp; i++) {
+		if (i >= pmu->nr_arch_gp_counters)
+			msr_intercept = true;
+		vmx_set_intercept_for_msr(vcpu, MSR_IA32_PERFCTR0 + i, MSR_TYPE_RW, msr_intercept);
+		if (fw_writes_is_enabled(vcpu))
+			vmx_set_intercept_for_msr(vcpu, MSR_IA32_PMC0 + i, MSR_TYPE_RW, msr_intercept);
+		else
+			vmx_set_intercept_for_msr(vcpu, MSR_IA32_PMC0 + i, MSR_TYPE_RW, true);
+	}
+
+	msr_intercept = !is_passthrough_pmu_enabled(vcpu);
+	for (i = 0; i < kvm_pmu_cap.num_counters_fixed; i++) {
+		if (i >= pmu->nr_arch_fixed_counters)
+			msr_intercept = true;
+		vmx_set_intercept_for_msr(vcpu, MSR_CORE_PERF_FIXED_CTR0 + i, MSR_TYPE_RW, msr_intercept);
+	}
+
+	if (pmu->version > 1 && is_passthrough_pmu_enabled(vcpu) &&
+	    pmu->nr_arch_gp_counters == kvm_pmu_cap.num_counters_gp &&
+	    pmu->nr_arch_fixed_counters == kvm_pmu_cap.num_counters_fixed)
+		msr_intercept = false;
+	else
+		msr_intercept = true;
+
+	vmx_set_intercept_for_msr(vcpu, MSR_CORE_PERF_GLOBAL_STATUS, MSR_TYPE_RW, msr_intercept);
+	vmx_set_intercept_for_msr(vcpu, MSR_CORE_PERF_GLOBAL_CTRL, MSR_TYPE_RW, msr_intercept);
+	vmx_set_intercept_for_msr(vcpu, MSR_CORE_PERF_GLOBAL_OVF_CTRL, MSR_TYPE_RW, msr_intercept);
+}
+
 struct kvm_pmu_ops intel_pmu_ops __initdata = {
 	.rdpmc_ecx_to_pmc = intel_rdpmc_ecx_to_pmc,
 	.msr_idx_to_pmc = intel_msr_idx_to_pmc,
@@ -752,6 +798,7 @@ struct kvm_pmu_ops intel_pmu_ops __initdata = {
 	.deliver_pmi = intel_pmu_deliver_pmi,
 	.cleanup = intel_pmu_cleanup,
 	.is_rdpmc_passthru_allowed = intel_is_rdpmc_passthru_allowed,
+	.passthrough_pmu_msrs = intel_passthrough_pmu_msrs,
 	.EVENTSEL_EVENT = ARCH_PERFMON_EVENTSEL_EVENT,
 	.MAX_NR_GP_COUNTERS = KVM_INTEL_PMC_MAX_GENERIC,
 	.MIN_NR_GP_COUNTERS = 1,
