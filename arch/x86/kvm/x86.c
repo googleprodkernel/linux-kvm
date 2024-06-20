@@ -239,6 +239,9 @@ EXPORT_SYMBOL_GPL(host_xss);
 u64 __read_mostly host_arch_capabilities;
 EXPORT_SYMBOL_GPL(host_arch_capabilities);
 
+u64 __read_mostly host_perf_cap;
+EXPORT_SYMBOL_GPL(host_perf_cap);
+
 const struct _kvm_stats_desc kvm_vm_stats_desc[] = {
 	KVM_GENERIC_VM_STATS(),
 	STATS_DESC_COUNTER(VM, mmu_shadow_zapped),
@@ -9792,6 +9795,9 @@ int kvm_x86_vendor_init(struct kvm_x86_init_ops *ops)
 
 	if (boot_cpu_has(X86_FEATURE_ARCH_CAPABILITIES))
 		rdmsrl(MSR_IA32_ARCH_CAPABILITIES, host_arch_capabilities);
+
+	if (boot_cpu_has(X86_FEATURE_PDCM))
+		rdmsrl(MSR_IA32_PERF_CAPABILITIES, host_perf_cap);
 
 	r = ops->hardware_setup();
 	if (r != 0)
