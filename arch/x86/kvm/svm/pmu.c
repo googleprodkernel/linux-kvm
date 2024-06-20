@@ -177,6 +177,7 @@ static void amd_pmu_refresh(struct kvm_vcpu *vcpu)
 {
 	struct kvm_pmu *pmu = vcpu_to_pmu(vcpu);
 	union cpuid_0x80000022_ebx ebx;
+	int i;
 
 	pmu->version = 1;
 	if (guest_cpuid_has(vcpu, X86_FEATURE_PERFMON_V2)) {
@@ -210,6 +211,18 @@ static void amd_pmu_refresh(struct kvm_vcpu *vcpu)
 	pmu->counter_bitmask[KVM_PMC_FIXED] = 0;
 	pmu->nr_arch_fixed_counters = 0;
 	bitmap_set(pmu->all_valid_pmc_idx, 0, pmu->nr_arch_gp_counters);
+
+	if (pmu->version > 1 || guest_cpuid_has(vcpu, X86_FEATURE_PERFCTR_CORE)) {
+		for (i = 0; i < pmu->nr_arch_gp_counters; i++) {
+			pmu->gp_counters[i].msr_eventsel = MSR_F15H_PERF_CTL0 + 2 * i;
+			pmu->gp_counters[i].msr_counter = MSR_F15H_PERF_CTR0 + 2 * i;
+		}
+	} else {
+		for (i = 0; i < pmu->nr_arch_gp_counters; i++) {
+			pmu->gp_counters[i].msr_eventsel = MSR_K7_EVNTSEL0 + i;
+			pmu->gp_counters[i].msr_counter = MSR_K7_PERFCTR0 + i;
+		}
+	}
 }
 
 static void amd_pmu_init(struct kvm_vcpu *vcpu)
