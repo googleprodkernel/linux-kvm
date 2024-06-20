@@ -4430,6 +4430,7 @@ static void vmx_set_perf_global_ctrl(struct vcpu_vmx *vmx)
 			}
 			m->val[i].index = MSR_CORE_PERF_GLOBAL_CTRL;
 			m->val[i].value = 0;
+			vcpu_to_pmu(&vmx->vcpu)->global_ctrl_slot_in_autoload = i;
 		}
 		/*
 		 * Setup auto clear host PERF_GLOBAL_CTRL msr at vm exit.
@@ -4457,6 +4458,7 @@ static void vmx_set_perf_global_ctrl(struct vcpu_vmx *vmx)
 				vmcs_write32(VM_EXIT_MSR_STORE_COUNT, m->nr);
 			}
 			m->val[i].index = MSR_CORE_PERF_GLOBAL_CTRL;
+			vcpu_to_pmu(&vmx->vcpu)->global_ctrl_slot_in_autostore = i;
 		}
 	} else {
 		if (!(vmentry_ctrl & VM_ENTRY_LOAD_IA32_PERF_GLOBAL_CTRL)) {
@@ -4467,6 +4469,7 @@ static void vmx_set_perf_global_ctrl(struct vcpu_vmx *vmx)
 				m->val[i] = m->val[m->nr];
 				vmcs_write32(VM_ENTRY_MSR_LOAD_COUNT, m->nr);
 			}
+			vcpu_to_pmu(&vmx->vcpu)->global_ctrl_slot_in_autoload = -ENOENT;
 		}
 		if (!(vmexit_ctrl & VM_EXIT_LOAD_IA32_PERF_GLOBAL_CTRL)) {
 			m = &vmx->msr_autoload.host;
@@ -4485,6 +4488,7 @@ static void vmx_set_perf_global_ctrl(struct vcpu_vmx *vmx)
 				m->val[i] = m->val[m->nr];
 				vmcs_write32(VM_EXIT_MSR_STORE_COUNT, m->nr);
 			}
+			vcpu_to_pmu(&vmx->vcpu)->global_ctrl_slot_in_autostore = -ENOENT;
 		}
 	}
 
@@ -7272,7 +7276,7 @@ void vmx_cancel_injection(struct kvm_vcpu *vcpu)
 	vmcs_write32(VM_ENTRY_INTR_INFO_FIELD, 0);
 }
 
-static void atomic_switch_perf_msrs(struct vcpu_vmx *vmx)
+static void __atomic_switch_perf_msrs(struct vcpu_vmx *vmx)
 {
 	int i, nr_msrs;
 	struct perf_guest_switch_msr *msrs;
@@ -7293,6 +7297,46 @@ static void atomic_switch_perf_msrs(struct vcpu_vmx *vmx)
 		else
 			add_atomic_switch_msr(vmx, msrs[i].msr, msrs[i].guest,
 					msrs[i].host, false);
+}
+
+static void save_perf_global_ctrl_in_passthrough_pmu(struct vcpu_vmx *vmx)
+{
+	struct kvm_pmu *pmu = vcpu_to_pmu(&vmx->vcpu);
+	int i;
+
+	if (vm_exit_controls_get(vmx) & VM_EXIT_SAVE_IA32_PERF_GLOBAL_CTRL) {
+		pmu->global_ctrl = vmcs_read64(GUEST_IA32_PERF_GLOBAL_CTRL);
+	} else {
+		i = pmu->global_ctrl_slot_in_autostore;
+		pmu->global_ctrl = vmx->msr_autostore.guest.val[i].value;
+	}
+}
+
+static void load_perf_global_ctrl_in_passthrough_pmu(struct vcpu_vmx *vmx)
+{
+	struct kvm_pmu *pmu = vcpu_to_pmu(&vmx->vcpu);
+	u64 global_ctrl = pmu->global_ctrl;
+	int i;
+
+	if (vm_entry_controls_get(vmx) & VM_ENTRY_LOAD_IA32_PERF_GLOBAL_CTRL) {
+		vmcs_write64(GUEST_IA32_PERF_GLOBAL_CTRL, global_ctrl);
+	} else {
+		i = pmu->global_ctrl_slot_in_autoload;
+		vmx->msr_autoload.guest.val[i].value = global_ctrl;
+	}
+}
+
+static void __atomic_switch_perf_msrs_in_passthrough_pmu(struct vcpu_vmx *vmx)
+{
+	load_perf_global_ctrl_in_passthrough_pmu(vmx);
+}
+
+static void atomic_switch_perf_msrs(struct vcpu_vmx *vmx)
+{
+	if (is_passthrough_pmu_enabled(&vmx->vcpu))
+		__atomic_switch_perf_msrs_in_passthrough_pmu(vmx);
+	else
+		__atomic_switch_perf_msrs(vmx);
 }
 
 static void vmx_update_hv_timer(struct kvm_vcpu *vcpu, bool force_immediate_exit)
@@ -7404,6 +7448,9 @@ static noinstr void vmx_vcpu_enter_exit(struct kvm_vcpu *vcpu,
 
 	vcpu->arch.cr2 = native_read_cr2();
 	vcpu->arch.regs_avail &= ~VMX_REGS_LAZY_LOAD_SET;
+
+	if (is_passthrough_pmu_enabled(vcpu))
+		save_perf_global_ctrl_in_passthrough_pmu(vmx);
 
 	vmx->idt_vectoring_info = 0;
 

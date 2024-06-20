@@ -601,6 +601,8 @@ struct kvm_pmu {
 	u8 event_count;
 
 	bool passthrough;
+	int global_ctrl_slot_in_autoload;
+	int global_ctrl_slot_in_autostore;
 };
 
 struct kvm_pmu_ops;
