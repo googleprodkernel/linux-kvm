@@ -256,6 +256,10 @@ static inline void kvm_init_pmu_capability(const struct kvm_pmu_ops *pmu_ops)
 
 static inline void kvm_pmu_request_counter_reprogram(struct kvm_pmc *pmc)
 {
+	/* Passthrough PMU never reprogram counters via KVM_REQ_PMU. */
+	if (pmc_to_pmu(pmc)->passthrough)
+		return;
+
 	set_bit(pmc->idx, pmc_to_pmu(pmc)->reprogram_pmi);
 	kvm_make_request(KVM_REQ_PMU, pmc->vcpu);
 }
@@ -263,6 +267,10 @@ static inline void kvm_pmu_request_counter_reprogram(struct kvm_pmc *pmc)
 static inline void reprogram_counters(struct kvm_pmu *pmu, u64 diff)
 {
 	int bit;
+
+	/* Passthrough PMU never reprogram counters via KVM_REQ_PMU. */
+	if (pmu->passthrough)
+		return;
 
 	if (!diff)
 		return;
