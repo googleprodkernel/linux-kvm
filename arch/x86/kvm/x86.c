@@ -6690,8 +6690,11 @@ split_irqchip_unlock:
 		if (!kvm->created_vcpus) {
 			kvm->arch.enable_pmu = !(cap->args[0] & KVM_PMU_CAP_DISABLE);
 			/* Disable passthrough PMU if enable_pmu is false. */
-			if (!kvm->arch.enable_pmu)
+			if (!kvm->arch.enable_pmu) {
+				if (kvm->arch.enable_passthrough_pmu)
+					perf_put_mediated_pmu();
 				kvm->arch.enable_passthrough_pmu = false;
+			}
 			r = 0;
 		}
 		mutex_unlock(&kvm->lock);
@@ -12637,6 +12640,14 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 	kvm->arch.guest_can_read_msr_platform_info = true;
 	kvm->arch.enable_pmu = enable_pmu;
 	kvm->arch.enable_passthrough_pmu = enable_passthrough_pmu;
+	if (kvm->arch.enable_passthrough_pmu) {
+		ret = perf_get_mediated_pmu();
+		if (ret < 0) {
+			kvm_err("failed to enable mediated passthrough pmu, please disable system wide perf events\n");
+			goto out_uninit_mmu;
+		}
+	}
+
 
 #if IS_ENABLED(CONFIG_HYPERV)
 	spin_lock_init(&kvm->arch.hv_root_tdp_lock);
@@ -12785,6 +12796,8 @@ void kvm_arch_destroy_vm(struct kvm *kvm)
 		__x86_set_memory_region(kvm, TSS_PRIVATE_MEMSLOT, 0, 0);
 		mutex_unlock(&kvm->slots_lock);
 	}
+	if (kvm->arch.enable_passthrough_pmu)
+		perf_put_mediated_pmu();
 	kvm_unload_vcpu_mmus(kvm);
 	static_call_cond(kvm_x86_vm_destroy)(kvm);
 	kvm_free_msr_filter(srcu_dereference_check(kvm->arch.msr_filter, &kvm->srcu, 1));
