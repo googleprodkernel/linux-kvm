@@ -769,10 +769,23 @@ static void test_asi_intr_nesting(struct kunit *test)
 	unregister_nmi_handler(NMI_UNKNOWN, "asi-test-nmi");
 }
 
+static void test_alloc_pages_sensitivity(struct kunit *test)
+{
+	pgd_t *restricted_pgd = asi_pgd(ASI_GLOBAL_NONSENSITIVE);
+	struct page *page_s = do_alloc_pages(test, GFP_KERNEL | __GFP_SENSITIVE, 0);
+	struct page *page_ns = do_alloc_pages(test, GFP_KERNEL, 0);
+
+	KUNIT_EXPECT_FALSE(test, addr_present(restricted_pgd,
+			  (unsigned long)page_to_virt(page_s)));
+	KUNIT_EXPECT_TRUE(test, addr_present(restricted_pgd,
+			  (unsigned long)page_to_virt(page_ns)));
+}
+
 static struct kunit_case asi_test_cases[] = {
 	KUNIT_CASE(test_asi_state),
 	KUNIT_CASE(test_asi_hooks),
 	KUNIT_CASE(test_asi_map_global_nonsensitive),
+	KUNIT_CASE(test_alloc_pages_sensitivity),
 	KUNIT_CASE(test_percpu_alloc),
 	KUNIT_CASE(test_change_page_attr),
 	KUNIT_CASE(test_change_page_attr_split_mapping),
