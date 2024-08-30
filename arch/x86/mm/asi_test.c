@@ -12,7 +12,9 @@
 #include <kunit/resource.h>
 #include <kunit/test.h>
 
+#include <asm/apic.h>
 #include <asm/asi.h>
+#include <asm/nmi.h>
 #include <asm/set_memory.h>
 
 #include "asi_internal.h"
@@ -564,6 +566,217 @@ static void test_percpu_alloc(struct kunit *test)
 	}
 }
 
+/*******************************************************************************
+ * ASI Interrupts
+ *
+ * Test ASI interaction with interrupts received while in different states.
+ ******************************************************************************/
+static bool *sensitive_data;
+static bool intr_handled;
+
+static int asi_nmi_handler(unsigned int val, struct pt_regs *regs)
+{
+	/*
+	 * Store an "expected value" (sensitive) into an "expected
+	 * variable" (non sensitive) as a way to detect the interrupt
+	 * has been served.
+	 */
+	WRITE_ONCE(intr_handled, *sensitive_data);
+
+	return NMI_HANDLED;
+}
+
+static void test_asi_intr(struct kunit *test)
+{
+	struct asi_test_info *info = setup_test_asi(test, &asi_cnt_hooks);
+	struct page *sensitive_page;
+	struct asi *asi = info->asi;
+	int test_cpu;
+
+	reset_asi_cnt_hooks();
+	KUNIT_ASSERT_EQ(test, pre_exit_cnt, 0);
+
+	/* Setup: data for the intr handler to be read from sensitive memory. */
+	sensitive_page = do_alloc_pages(test, GFP_KERNEL | __GFP_SENSITIVE, 0);
+	sensitive_data = (bool *)page_address(sensitive_page);
+	WRITE_ONCE(*sensitive_data, true);
+
+	/* Setup: interrupt handler to read from sensitive memory. */
+	register_nmi_handler(NMI_UNKNOWN, asi_nmi_handler, 0, "asi-test-intr");
+
+	/* Case 1: Interrupt while in critical section... */
+	preempt_disable();
+	asi_enter(asi);
+	KUNIT_EXPECT_TRUE(test, asi_is_restricted());
+	test_cpu = smp_processor_id();
+
+	WRITE_ONCE(intr_handled, false);
+	barrier();
+	apic->send_IPI_mask(cpumask_of(test_cpu), NMI_VECTOR);
+	while (!READ_ONCE(intr_handled))
+		cpu_relax();
+
+	/* ... on return must remain in the critical section. */
+	KUNIT_EXPECT_TRUE(test, asi_is_restricted());
+	KUNIT_EXPECT_TRUE(test, asi_in_critical_section());
+	KUNIT_EXPECT_EQ(test, pre_exit_cnt, 1);
+
+	/* Case 2: Interrupt outside the critical section... */
+	asi_relax();
+
+	WRITE_ONCE(intr_handled, false);
+	barrier();
+	apic->send_IPI_mask(cpumask_of(test_cpu), NMI_VECTOR);
+	while (!READ_ONCE(intr_handled))
+		cpu_relax();
+
+	/* ... on return do not re-enter the critical section. */
+	KUNIT_EXPECT_FALSE(test, asi_is_restricted());
+	KUNIT_EXPECT_FALSE(test, asi_in_critical_section());
+	KUNIT_EXPECT_EQ(test, pre_exit_cnt, 2);
+
+	preempt_enable();
+	unregister_nmi_handler(NMI_UNKNOWN, "asi-test-intr");
+}
+
+#define NMI_ACTIVE -2
+static int nmi_cpu;
+static int nmi_level;
+static bool nmi_handled;
+static bool nmi_exit_is_restricted;
+
+static int asi_nested_nmi_handler(unsigned int val, struct pt_regs *regs)
+{
+	/*
+	 * This NMI handler can be called by any random NMI.
+	 * Do nothing when not scheduled by the asi IRQ work.
+	 * This still leaves a tiny race condition, in case another NMI should
+	 * come in before we latch the NMI level in the next instruction.
+	 * In any case, we still expect the first NMI to pass this check to
+	 * latch a nesting level greater than the IRQ work one.
+	 */
+	if (READ_ONCE(nmi_level) != NMI_ACTIVE)
+		return NMI_DONE;
+	WRITE_ONCE(nmi_level, asi_intr_nest_depth());
+	WRITE_ONCE(nmi_cpu, smp_processor_id());
+
+	/*
+	 * Store an "expected value" (sensitive) into an "expected
+	 * variable" (non sensitive) as a way to detect the interrupt
+	 * has been served.
+	 * This is also expected to generate an ASI exit which will have to be
+	 * persistent until we re-enter the critical section.
+	 */
+	WRITE_ONCE(nmi_handled, *sensitive_data);
+	WRITE_ONCE(nmi_exit_is_restricted, asi_is_restricted());
+
+	return NMI_HANDLED;
+}
+
+static struct irq_work asi_iw;
+static int iw_cpu;
+static int iw_level;
+static bool iw_exit_is_restricted;
+static bool iw_entry_is_restricted;
+
+static void asi_iw_handler(struct irq_work *iw)
+{
+	int test_cpu = smp_processor_id();
+
+	/*
+	 * Keep track of system and ASI status. Note, these are global variables
+	 * thus we expect them mapped in the restricted domain, i.e. no ASI
+	 * exit is expected to be triggered by these memory accesses.
+	 */
+	WRITE_ONCE(iw_level, asi_intr_nest_depth());
+	WRITE_ONCE(iw_cpu, smp_processor_id());
+	WRITE_ONCE(iw_entry_is_restricted, asi_is_restricted());
+
+	/*
+	 * Set the tokens expected by the NMI handler. Do that to ensure
+	 * the NMI handler will capture the metrics only when scheduled by asi.
+	 */
+	WRITE_ONCE(nmi_level, NMI_ACTIVE);
+	barrier();
+
+	/* Generate an NMI on same CPU to nest the source interrupt. */
+	apic->send_IPI_mask(cpumask_of(test_cpu), NMI_VECTOR);
+
+	/*
+	 * An IRQ work is expected to be fast. However, for the scope of this
+	 * test, busy loop waiting for a (nested) NMI to come in and unlock us.
+	 */
+	while (READ_ONCE(nmi_level) <= iw_level)
+		cpu_relax();
+
+	/*
+	 * Keep track of ASI status before returning. We expect the (nested)
+	 * NMI triggered an ASI exit and we do not return the restricted address
+	 * space before continuing the critical section.
+	 */
+	WRITE_ONCE(iw_exit_is_restricted, asi_is_restricted());
+}
+
+static void test_asi_intr_nesting(struct kunit *test)
+{
+	struct asi_test_info *info = setup_test_asi(test, &asi_cnt_hooks);
+	struct page *sensitive_page;
+	struct asi *asi = info->asi;
+
+	reset_asi_cnt_hooks();
+	KUNIT_ASSERT_EQ(test, pre_exit_cnt, 0);
+
+	/* Setup: data for the intr handler to be read from sensitive memory. */
+	sensitive_page = do_alloc_pages(test, GFP_KERNEL | __GFP_SENSITIVE, 0);
+	sensitive_data = (bool *)page_address(sensitive_page);
+	*sensitive_data = true;
+
+	/* Setup: Level2: NMI handler to read from sensitive memory. */
+	register_nmi_handler(NMI_UNKNOWN, asi_nested_nmi_handler, 0,
+			     "asi-test-nmi");
+
+	/* Setup: Level1: IRQ handler to generate a nested interrupt. */
+	asi_iw = IRQ_WORK_INIT_HARD(asi_iw_handler);
+	WRITE_ONCE(iw_level, -1);
+	WRITE_ONCE(iw_cpu, -1);
+
+	/* Critical section start: switch to restricted domain. */
+	preempt_disable();
+	asi_enter(asi);
+	KUNIT_EXPECT_TRUE(test, asi_is_restricted());
+
+	/* Level1: schedule IRQ work (on this CPU) and wait for NMI. */
+	WRITE_ONCE(nmi_handled, false);
+	barrier();
+	irq_work_queue(&asi_iw);
+	while (!READ_ONCE(nmi_handled))
+		cpu_relax();
+
+	/* Test: NMI interrupt nested into IRQ Work interrupt. */
+	KUNIT_EXPECT_EQ(test, READ_ONCE(iw_cpu), READ_ONCE(nmi_cpu));
+	KUNIT_EXPECT_GE(test, READ_ONCE(iw_level), 1);
+	KUNIT_EXPECT_LT(test, READ_ONCE(iw_level), READ_ONCE(nmi_level));
+
+	/* Test: Can handle page faults from abritrary IRQs nesting depth. */
+	KUNIT_EXPECT_TRUE(test, READ_ONCE(iw_entry_is_restricted));
+	KUNIT_EXPECT_FALSE(test, READ_ONCE(nmi_exit_is_restricted));
+
+	/* Test: Retun to restricted domain only on critical section return. */
+	KUNIT_EXPECT_FALSE(test, READ_ONCE(iw_exit_is_restricted));
+	KUNIT_EXPECT_TRUE(test, asi_is_restricted());
+	KUNIT_EXPECT_TRUE(test, asi_in_critical_section());
+
+	/* Test: ASI callbacks triggered after initial asi_enter. */
+	KUNIT_EXPECT_EQ(test, pre_exit_cnt, 1);
+	KUNIT_EXPECT_EQ(test, post_enter_cnt, 2);
+
+	/* Critical section end: switch back to unrestricted domain. */
+	asi_relax();
+	asi_exit();
+	preempt_enable();
+	unregister_nmi_handler(NMI_UNKNOWN, "asi-test-nmi");
+}
+
 static struct kunit_case asi_test_cases[] = {
 	KUNIT_CASE(test_asi_state),
 	KUNIT_CASE(test_asi_hooks),
@@ -571,6 +784,8 @@ static struct kunit_case asi_test_cases[] = {
 	KUNIT_CASE(test_percpu_alloc),
 	KUNIT_CASE(test_change_page_attr),
 	KUNIT_CASE(test_change_page_attr_split_mapping),
+	KUNIT_CASE(test_asi_intr),
+	KUNIT_CASE(test_asi_intr_nesting),
 	{}
 };
 

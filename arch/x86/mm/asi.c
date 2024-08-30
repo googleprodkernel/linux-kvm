@@ -465,6 +465,7 @@ noinstr void __asi_enter(void)
 	if (target->class->ops.post_asi_enter)
 		target->class->ops.post_asi_enter();
 }
+EXPORT_SYMBOL_IF_KUNIT(__asi_enter);
 
 noinstr void asi_enter(struct asi *asi)
 {
