@@ -249,14 +249,6 @@ static struct page **pages_to_ptr_array(struct kunit *test, struct page *pages, 
 	return pg_array;
 }
 
-static bool addr_present(pgd_t *pgd, unsigned long addr)
-{
-	phys_addr_t phys;
-	unsigned long page_size, flags;
-
-	return follow_physaddr(pgd, addr, &phys, &page_size, &flags);
-}
-
 /*
  * TODO: b/311180042 - This is a very minimal smoke test. We need to test
  * different source mapping sizes, different numbers of pages per call, and

@@ -67,6 +67,8 @@ static inline int asi_map(struct asi *asi, void *addr, size_t len)
 	return 0;
 }
 
+static inline bool asi_is_mapped(struct asi *asi, void *addr) { return false; }
+
 static inline
 void asi_unmap(struct asi *asi, void *addr, size_t len) { }
 

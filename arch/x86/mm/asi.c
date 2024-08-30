@@ -616,6 +616,20 @@ VISIBLE_IF_KUNIT bool follow_physaddr(
 }
 EXPORT_SYMBOL_IF_KUNIT(follow_physaddr);
 
+static bool addr_present(pgd_t *pgd, unsigned long addr)
+{
+	phys_addr_t phys;
+	unsigned long page_size, flags;
+
+	return follow_physaddr(pgd, addr, &phys, &page_size, &flags);
+}
+EXPORT_SYMBOL_IF_KUNIT(addr_present);
+
+bool asi_is_mapped(struct asi *asi, void *addr)
+{
+	return addr_present(asi->pgd, (unsigned long)addr);
+}
+
 /*
  * Map the given range into the ASI page tables. The source of the mapping is
  * the regular unrestricted page tables. Can be used to map any kernel memory.

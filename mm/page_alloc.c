@@ -1500,6 +1500,9 @@ static void prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags
 		set_page_pfmemalloc(page);
 	else
 		clear_page_pfmemalloc(page);
+
+	VM_BUG_ON_PAGE(asi_is_mapped(ASI_GLOBAL_NONSENSITIVE, page_to_virt(page)),
+		       page);
 }
 
 /*
@@ -4524,8 +4527,11 @@ static bool asi_async_free_enqueue(struct page *page, unsigned int order)
 	struct asi_async_free_cpu_state *cpu_state;
 	unsigned long flags;
 
-	if (!PageGlobalNonSensitive(page))
+	if (!static_asi_enabled() || !PageGlobalNonSensitive(page)) {
+		VM_BUG_ON_PAGE(asi_is_mapped(ASI_GLOBAL_NONSENSITIVE, page_to_virt(page)),
+			page);
 		return false;
+	}
 
 	local_irq_save(flags);
 	cpu_state = this_cpu_ptr(&asi_async_free_cpu_state);

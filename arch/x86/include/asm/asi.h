@@ -142,6 +142,8 @@ void asi_exit(void);
 
 int  asi_map_gfp(struct asi *asi, void *addr, size_t len, gfp_t gfp_flags);
 int  asi_map(struct asi *asi, void *addr, size_t len);
+/* Not efficient, use for debug. */
+bool asi_is_mapped(struct asi *asi, void *addr);
 void asi_unmap(struct asi *asi, void *addr, size_t len);
 void asi_flush_tlb_range(struct asi *asi, void *addr, size_t len);
 

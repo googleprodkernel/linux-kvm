@@ -12,6 +12,7 @@
 bool follow_physaddr(
 	pgd_t *pgd_table, unsigned long virt,
 	phys_addr_t *phys, unsigned long *page_size, ulong *flags);
+bool addr_present(pgd_t *pgd, unsigned long addr);
 
 #endif /* CONFIG_KUNIT */
 
