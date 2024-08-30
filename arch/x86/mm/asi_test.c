@@ -118,6 +118,68 @@ static void test_asi_state(struct kunit *test)
 	preempt_enable();
 }
 
+/*******************************************************************************
+ * ASI Hooks
+ *
+ * Test ASI callbacks on ASI transitions among states.
+ ******************************************************************************/
+static int post_enter_cnt = 0;
+static int pre_exit_cnt = 0;
+
+static void post_asi_enter_cnt_hook(void)
+{
+	post_enter_cnt++;
+}
+
+static void pre_asi_exit_cnt_hook(void)
+{
+	pre_exit_cnt++;
+}
+
+struct asi_hooks asi_cnt_hooks = {
+	.post_asi_enter = post_asi_enter_cnt_hook,
+	.pre_asi_exit = pre_asi_exit_cnt_hook,
+};
+
+static void reset_asi_cnt_hooks(void)
+{
+	post_enter_cnt = 0;
+	pre_exit_cnt = 0;
+}
+
+static void test_asi_hooks(struct kunit *test)
+{
+	struct asi_test_info *info = setup_test_asi(test, &asi_cnt_hooks);
+	struct asi *asi = info->asi;
+
+	reset_asi_cnt_hooks();
+
+	/* Enter hook is called when entering a restricted domain */
+	preempt_disable();
+	asi_enter(asi);
+	KUNIT_EXPECT_EQ(test, post_enter_cnt, 1);
+	KUNIT_EXPECT_EQ(test, pre_exit_cnt, 0);
+
+	/* Enter hook is not called if we do not leave the restricted domain */
+	asi_relax();
+	asi_enter(asi);
+	KUNIT_EXPECT_EQ(test, post_enter_cnt, 1);
+	KUNIT_EXPECT_EQ(test, pre_exit_cnt, 0);
+
+	/*
+	 * Exit hook is called whenever we leave a resticted domain.
+	 * Since we do not expect return to user while running kunit tests,
+	 * use that as a reason to avoid possible false positives, e.g. due to
+	 * a #PF (in an intr handler).
+	 */
+	asi_relax();
+	asi_exit();
+	KUNIT_EXPECT_EQ(test, post_enter_cnt, pre_exit_cnt);
+	KUNIT_EXPECT_EQ(test, pre_exit_cnt, 1);
+
+	preempt_enable();
+}
+
 struct free_pages_ctx {
 	unsigned int order;
 	struct page *pages;
@@ -504,6 +566,7 @@ static void test_percpu_alloc(struct kunit *test)
 
 static struct kunit_case asi_test_cases[] = {
 	KUNIT_CASE(test_asi_state),
+	KUNIT_CASE(test_asi_hooks),
 	KUNIT_CASE(test_asi_map_global_nonsensitive),
 	KUNIT_CASE(test_percpu_alloc),
 	KUNIT_CASE(test_change_page_attr),
