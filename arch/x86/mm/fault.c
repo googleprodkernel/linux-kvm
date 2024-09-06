@@ -1582,6 +1582,7 @@ DEFINE_IDTENTRY_RAW_ERRORCODE(exc_page_fault)
 		pgd = (pgd_t *)__va(read_cr3_pa()) + pgd_index(address);
 		if (kernel_access_ok(error_code, address, pgd)) {
 			warn_if_bad_asi_pf(error_code, address);
+			trace_page_fault_asi(address, regs, error_code);
 			return;
 		}
 	}

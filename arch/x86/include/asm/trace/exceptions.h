@@ -30,7 +30,7 @@ DECLARE_EVENT_CLASS(x86_exceptions,
 		__entry->error_code = error_code;
 	),
 
-	TP_printk("address=%ps ip=%ps error_code=0x%lx",
+	TP_printk("address=%pS ip=%pS error_code=0x%lx",
 		  (void *)__entry->address, (void *)__entry->ip,
 		  __entry->error_code) );
 
@@ -43,6 +43,15 @@ DEFINE_EVENT_FN(x86_exceptions, name,				\
 
 DEFINE_PAGE_FAULT_EVENT(page_fault_user);
 DEFINE_PAGE_FAULT_EVENT(page_fault_kernel);
+#ifdef CONFIG_MITIGATION_ADDRESS_SPACE_ISOLATION
+DEFINE_PAGE_FAULT_EVENT(page_fault_asi);
+#else
+/*
+ * Avoid creating a misleading entry in available_events, but also avoid
+ * ifdeffery in .c files.
+ */
+#define trace_page_fault_asi(...)
+#endif
 
 #undef TRACE_INCLUDE_PATH
 #undef TRACE_INCLUDE_FILE
