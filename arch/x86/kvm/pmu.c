@@ -1107,18 +1107,25 @@ void kvm_pmu_save_pmu_context(struct kvm_vcpu *vcpu)
 		if (pmc->counter)
 			wrmsrl(pmc->msr_counter, 0);
 	}
+
+	perf_guest_exit();
 }
 
 void kvm_pmu_restore_pmu_context(struct kvm_vcpu *vcpu)
 {
 	struct kvm_pmu *pmu = vcpu_to_pmu(vcpu);
 	struct kvm_pmc *pmc;
+	u32 guest_lvtpc;
 	int i;
 
 	if (!is_passthrough_pmu_enabled(vcpu))
 		return;
 
 	lockdep_assert_irqs_disabled();
+
+	guest_lvtpc = APIC_DM_FIXED | KVM_GUEST_PMI_VECTOR |
+		(kvm_lapic_get_reg(vcpu->arch.apic, APIC_LVTPC) & APIC_LVT_MASKED);
+	perf_guest_enter(guest_lvtpc);
 
 	static_call_cond(kvm_x86_pmu_restore_pmu_context)(vcpu);
 
