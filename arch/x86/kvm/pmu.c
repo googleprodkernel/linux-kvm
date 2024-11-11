@@ -787,8 +787,13 @@ void kvm_pmu_refresh(struct kvm_vcpu *vcpu)
 	 * in the global controls).  Emulate that behavior when refreshing the
 	 * PMU so that userspace doesn't need to manually set PERF_GLOBAL_CTRL.
 	 */
-	if (kvm_pmu_has_perf_global_ctrl(pmu) && pmu->nr_arch_gp_counters)
+	if ((pmu->passthrough || kvm_pmu_has_perf_global_ctrl(pmu)) &&
+	    pmu->nr_arch_gp_counters) {
+		WARN_ONCE(pmu->passthrough && kvm_pmu_cap.version < 2,
+			"%s(): host PMU (version %d) doesn't support GLOBAL_CTRL\n",
+			__func__, kvm_pmu_cap.version);
 		pmu->global_ctrl = GENMASK_ULL(pmu->nr_arch_gp_counters - 1, 0);
+	}
 }
 
 void kvm_pmu_init(struct kvm_vcpu *vcpu)
