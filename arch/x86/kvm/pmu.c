@@ -797,6 +797,7 @@ void kvm_pmu_init(struct kvm_vcpu *vcpu)
 
 	memset(pmu, 0, sizeof(*pmu));
 	kvm_pmu_call(init)(vcpu);
+	pmu->passthrough = false;
 	kvm_pmu_refresh(vcpu);
 }
 
