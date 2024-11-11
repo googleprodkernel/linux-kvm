@@ -4896,6 +4896,8 @@ static void intel_pmu_check_hybrid_pmus(struct x86_hybrid_pmu *pmu)
 	else
 		pmu->pmu.capabilities &= ~PERF_PMU_CAP_AUX_OUTPUT;
 
+	pmu->pmu.capabilities |= PERF_PMU_CAP_PASSTHROUGH_VPMU;
+
 	intel_pmu_check_event_constraints(pmu->event_constraints,
 					  pmu->cntr_mask64,
 					  pmu->fixed_cntr_mask64,
@@ -6443,6 +6445,9 @@ __init int intel_pmu_init(void)
 		if (x86_pmu.intel_cap.anythread_deprecated)
 			pr_cont(" AnyThread deprecated, ");
 	}
+
+	/* The perf side of core PMU is ready to support the passthrough vPMU. */
+	x86_get_pmu(smp_processor_id())->capabilities |= PERF_PMU_CAP_PASSTHROUGH_VPMU;
 
 	/*
 	 * Install the hw-cache-events table:
