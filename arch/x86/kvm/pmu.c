@@ -1072,3 +1072,23 @@ void kvm_pmu_after_set_cpuid(struct kvm_vcpu *vcpu)
 
 	static_call_cond(kvm_x86_pmu_after_set_cpuid)(vcpu);
 }
+
+void kvm_pmu_save_pmu_context(struct kvm_vcpu *vcpu)
+{
+	if (!is_passthrough_pmu_enabled(vcpu))
+		return;
+
+	lockdep_assert_irqs_disabled();
+
+	static_call_cond(kvm_x86_pmu_save_pmu_context)(vcpu);
+}
+
+void kvm_pmu_restore_pmu_context(struct kvm_vcpu *vcpu)
+{
+	if (!is_passthrough_pmu_enabled(vcpu))
+		return;
+
+	lockdep_assert_irqs_disabled();
+
+	static_call_cond(kvm_x86_pmu_restore_pmu_context)(vcpu);
+}
