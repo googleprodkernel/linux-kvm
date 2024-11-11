@@ -1095,10 +1095,9 @@ void kvm_pmu_save_pmu_context(struct kvm_vcpu *vcpu)
 	for (i = 0; i < pmu->nr_arch_gp_counters; i++) {
 		pmc = &pmu->gp_counters[i];
 		rdpmcl(i, pmc->counter);
-		rdmsrl(pmc->msr_eventsel, pmc->eventsel);
 		if (pmc->counter)
 			wrmsrl(pmc->msr_counter, 0);
-		if (pmc->eventsel)
+		if (pmc->eventsel_hw)
 			wrmsrl(pmc->msr_eventsel, 0);
 	}
 
@@ -1131,7 +1130,7 @@ void kvm_pmu_restore_pmu_context(struct kvm_vcpu *vcpu)
 	for (i = 0; i < pmu->nr_arch_gp_counters; i++) {
 		pmc = &pmu->gp_counters[i];
 		wrmsrl(pmc->msr_counter, pmc->counter);
-		wrmsrl(pmc->msr_eventsel, pmc->eventsel);
+		wrmsrl(pmc->msr_eventsel, pmc->eventsel_hw);
 	}
 
 	for (i = 0; i < pmu->nr_arch_fixed_counters; i++) {
