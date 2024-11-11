@@ -1065,3 +1065,10 @@ cleanup:
 	kfree(filter);
 	return r;
 }
+
+void kvm_pmu_after_set_cpuid(struct kvm_vcpu *vcpu)
+{
+	kvm_pmu_refresh(vcpu);
+
+	static_call_cond(kvm_x86_pmu_after_set_cpuid)(vcpu);
+}
