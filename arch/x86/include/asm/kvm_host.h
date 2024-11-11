@@ -552,6 +552,7 @@ struct kvm_pmu {
 	unsigned available_event_types;
 	u64 fixed_ctr_ctrl;
 	u64 fixed_ctr_ctrl_rsvd;
+	u64 fixed_ctr_ctrl_hw;
 	u64 global_ctrl;
 	u64 global_status;
 	u64 counter_bitmask[2];
