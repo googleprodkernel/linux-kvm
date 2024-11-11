@@ -351,6 +351,17 @@ static void amd_restore_pmu_context(struct kvm_vcpu *vcpu)
 	wrmsrl(MSR_AMD64_PERF_CNTR_GLOBAL_CTL, pmu->global_ctrl);
 }
 
+static bool amd_incr_counter(struct kvm_pmc *pmc)
+{
+	pmc->counter += 1;
+	pmc->counter &= pmc_bitmask(pmc);
+
+	if (!pmc->counter)
+		return true;
+
+	return false;
+}
+
 struct kvm_pmu_ops amd_pmu_ops __initdata = {
 	.rdpmc_ecx_to_pmc = amd_rdpmc_ecx_to_pmc,
 	.msr_idx_to_pmc = amd_msr_idx_to_pmc,
@@ -364,6 +375,7 @@ struct kvm_pmu_ops amd_pmu_ops __initdata = {
 	.after_set_cpuid = amd_pmu_after_set_cpuid,
 	.save_pmu_context = amd_save_pmu_context,
 	.restore_pmu_context = amd_restore_pmu_context,
+	.incr_counter = amd_incr_counter,
 	.EVENTSEL_EVENT = AMD64_EVENTSEL_EVENT,
 	.MAX_NR_GP_COUNTERS = KVM_MAX_NR_AMD_GP_COUNTERS,
 	.MIN_NR_GP_COUNTERS = AMD64_NUM_COUNTERS,
