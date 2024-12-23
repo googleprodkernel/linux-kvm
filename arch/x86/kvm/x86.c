@@ -10986,6 +10986,8 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 		set_debugreg(0, 7);
 	}
 
+	kvm_pmu_load_guest_context(vcpu);
+
 	guest_timing_enter_irqoff();
 
 	for (;;) {
@@ -11014,6 +11016,8 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 		/* Note, VM-Exits that go down the "slow" path are accounted below. */
 		++vcpu->stat.exits;
 	}
+
+	kvm_pmu_put_guest_context(vcpu);
 
 	/*
 	 * Do this here before restoring debug registers on the host.  And
