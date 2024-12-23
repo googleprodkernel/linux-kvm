@@ -680,7 +680,6 @@ int kvm_pmu_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		msr_info->data = pmu->global_status;
 		break;
 	case MSR_AMD64_PERF_CNTR_GLOBAL_CTL:
-	case MSR_CORE_PERF_GLOBAL_CTRL:
 		msr_info->data = pmu->global_ctrl;
 		break;
 	case MSR_AMD64_PERF_CNTR_GLOBAL_STATUS_CLR:
@@ -731,6 +730,10 @@ int kvm_pmu_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 			diff = pmu->global_ctrl ^ data;
 			pmu->global_ctrl = data;
 			reprogram_counters(pmu, diff);
+
+			/* Propagate guest global_ctrl to GUEST_IA32_PERF_GLOBAL_CTRL. */
+			if (kvm_mediated_pmu_enabled(vcpu))
+				kvm_pmu_call(set_msr)(vcpu, msr_info);
 		}
 		break;
 	case MSR_CORE_PERF_GLOBAL_OVF_CTRL:
