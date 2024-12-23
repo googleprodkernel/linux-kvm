@@ -305,6 +305,11 @@ static void pmc_update_sample_period(struct kvm_pmc *pmc)
 
 void pmc_write_counter(struct kvm_pmc *pmc, u64 val)
 {
+	if (kvm_mediated_pmu_enabled(pmc->vcpu)) {
+		pmc->counter = val & pmc_bitmask(pmc);
+		return;
+	}
+
 	/*
 	 * Drop any unconsumed accumulated counts, the WRMSR is a write, not a
 	 * read-modify-write.  Adjust the counter value so that its value is
@@ -454,6 +459,23 @@ static int reprogram_counter(struct kvm_pmc *pmc)
 	u64 new_config = eventsel;
 	bool emulate_overflow;
 	u8 fixed_ctr_ctrl;
+
+	if (kvm_mediated_pmu_enabled(pmu_to_vcpu(pmu))) {
+		if (!check_pmu_event_filter(pmc)) {
+			pmc->counter = 0;
+
+			if (pmc_is_gp(pmc)) {
+				pmc->eventsel = 0;
+			} else {
+				int idx = pmc->idx - KVM_FIXED_PMC_BASE_IDX;
+
+				pmu->fixed_ctr_ctrl &=
+					~intel_fixed_bits_by_idx(idx, 0xf);
+			}
+		}
+
+		return 0;
+	}
 
 	emulate_overflow = pmc_pause_counter(pmc);
 
